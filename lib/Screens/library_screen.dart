@@ -25,174 +25,77 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  int _currentIndex = 0;
-
-  // Hardcoded test data
   final List<Manhwa> manhwas = [
     Manhwa(
       id: '1',
       name: 'Solo Leveling',
       genre: 'Action, Fantasy',
       totalChapters: 179,
-      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/1/thumbnail.png',),
+      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/1/thumbnail.png',
+    ),
     Manhwa(
       id: '2',
-      name: 'Tower of God',
+      name: "Omniscient Reader's Viewpoint",
       genre: 'Adventure, Drama',
       totalChapters: 588,
       coverUrl: 'https://via.placeholder.com/200x280/a29bfe/ffffff?text=Tower+of+God',
     ),
     Manhwa(
       id: '3',
-      name: 'The Beginning After The End',
-      genre: 'Fantasy, Adventure',
-      totalChapters: 169,
-      coverUrl: 'https://via.placeholder.com/200x280/fd79a8/ffffff?text=TBATE',
+      name: "A Stepmother's Märchen",
+      genre: 'Fantasy, Romance',
+      totalChapters: 66,
+      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/37/thumbnail.png',
     ),
     Manhwa(
       id: '4',
-      name: 'Noblesse',
-      genre: 'Action, Supernatural',
-      totalChapters: 544,
-      coverUrl: 'https://via.placeholder.com/200x280/00b894/ffffff?text=Noblesse',
+      name: 'Black Cat and Soldier',
+      genre: 'Action, Drama',
+      totalChapters: 50,
+      coverUrl: 'https://via.placeholder.com/200x280/6c5ce7/ffffff?text=Black+Cat+and+Soldier',
     ),
-    Manhwa(
-      id: '5',
-      name: 'God of High School',
-      genre: 'Action, Martial Arts',
-      totalChapters: 569,
-      coverUrl: 'https://via.placeholder.com/200x280/e17055/ffffff?text=GoHS',
-    ),
-    Manhwa(
-      id: '6',
-      name: 'Omniscient Reader',
-      genre: 'Fantasy, Drama',
-      totalChapters: 209,
-      coverUrl: 'https://via.placeholder.com/200x280/0984e3/ffffff?text=ORV',
-    ),
-    Manhwa(
-      id: '7',
-      name: 'Hardcore Leveling Warrior',
-      genre: 'Action, Gaming',
-      totalChapters: 329,
-      coverUrl: 'https://via.placeholder.com/200x280/fdcb6e/ffffff?text=HCLW',
-    ),
-    Manhwa(
-      id: '8',
-      name: 'Lookism',
-      genre: 'Drama, School',
-      totalChapters: 476,
-      coverUrl: 'https://via.placeholder.com/200x280/6c5ce7/ffffff?text=Lookism',
-    ),
-    Manhwa(
-      id: '9',
-      name: 'Windbreaker',
-      genre: 'Sports, Drama',
-      totalChapters: 488,
-      coverUrl: 'https://via.placeholder.com/200x280/00cec9/ffffff?text=Windbreaker',
-    ),
-    Manhwa(
-      id: '10',
-      name: 'UnOrdinary',
-      genre: 'Supernatural, School',
-      totalChapters: 329,
-      coverUrl: 'https://via.placeholder.com/200x280/74b9ff/ffffff?text=UnOrdinary',
-    ),
-    Manhwa(
-      id: '11',
-      name: 'Weak Hero',
-      genre: 'Action, School',
-      totalChapters: 285,
-      coverUrl: 'https://via.placeholder.com/200x280/55a3ff/ffffff?text=Weak+Hero',
-    ),
-    Manhwa(
-      id: '12',
-      name: 'Eleceed',
-      genre: 'Action, Supernatural',
-      totalChapters: 279,
-      coverUrl: 'https://via.placeholder.com/200x280/ff7675/ffffff?text=Eleceed',
-    ),
+    
   ];
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1a1a1a),
-      appBar: _buildAppBar(),
-      body: _buildLibraryGrid(),
-      bottomNavigationBar: _buildBottomNavigation(),
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      backgroundColor: const Color(0xFF2a2a2a),
-      elevation: 0,
-      title: const Text(
-        'Library',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 24,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.search, color: Colors.white),
-          onPressed: () {
-            // Search functionality to be implemented
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Search functionality coming soon!')),
-            );
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.sort, color: Colors.white),
-          onPressed: () {
-            // Sort functionality to be implemented
-            _showSortOptions();
-          },
-        ),
-        const SizedBox(width: 8),
+    return Column(
+      children: [
+        Expanded(child: _buildLibraryGrid()),
       ],
     );
   }
 
   Widget _buildLibraryGrid() {
-  return Padding(
-    padding: const EdgeInsets.all(16.0),
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        return GridView.builder(
-          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 160, // max width of each tile
-            mainAxisExtent: 260,     // fixed height of each tile
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 16,
-          ),
-          itemCount: manhwas.length,
-          itemBuilder: (context, index) {
-            return _buildManhwaCard(manhwas[index]);
-          },
-        );
-      },
-    ),
-  );
-}
-
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 160,
+          mainAxisExtent: 260,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 16,
+        ),
+        itemCount: manhwas.length,
+        itemBuilder: (context, index) {
+          return _buildManhwaCard(manhwas[index]);
+        },
+      ),
+    );
+  }
 
   Widget _buildManhwaCard(Manhwa manhwa) {
     return GestureDetector(
       onTap: () {
-        // Navigate to manhwa detail screen
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => ManhwaScreen(
-              id: manhwa.id,
+              manhwaId: manhwa.id,
               name: manhwa.name,
               genre: manhwa.genre,
-              totalChapters: manhwa.totalChapters,
+             // totalChapters: manhwa.totalChapters,
+              //chapters: [], 
             ),
           ),
         );
@@ -212,7 +115,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-           // Cover Image
+            // Cover Image
             Expanded(
               flex: 4,
               child: ClipRRect(
@@ -227,8 +130,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       child: Icon(Icons.broken_image, color: Colors.white70),
                     ),
                   ),
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
                     return Container(
                       color: Colors.grey[900],
                       child: const Center(child: CircularProgressIndicator()),
@@ -285,54 +188,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildBottomNavigation() {
-    return BottomNavigationBar(
-      currentIndex: _currentIndex,
-      type: BottomNavigationBarType.fixed,
-      backgroundColor: const Color(0xFF2a2a2a),
-      selectedItemColor: const Color(0xFF6c5ce7),
-      unselectedItemColor: Colors.grey[400],
-      selectedFontSize: 12,
-      unselectedFontSize: 12,
-      onTap: (index) {
-        setState(() {
-          _currentIndex = index;
-        });
-        
-        // Show which tab was tapped (functionality to be implemented)
-        final tabNames = ['Library', 'Updates', 'History', 'Browse', 'More'];
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${tabNames[index]} tab selected'),
-            duration: const Duration(milliseconds: 500),
-          ),
-        );
-      },
-      items: const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.library_books),
-          label: 'Library',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.update),
-          label: 'Updates',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.history),
-          label: 'History',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.explore),
-          label: 'Browse',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.more_horiz),
-          label: 'More',
-        ),
-      ],
     );
   }
 

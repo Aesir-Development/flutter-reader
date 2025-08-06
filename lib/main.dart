@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'Screens/login_screen.dart';  // Import your login screen
+import 'package:flutterreader/Screens/main_shell.dart';
+import 'Screens/login_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,7 +16,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.deepPurple,
       ),
-      home: const ManhwaLoginScreen(),  // Use your login screen as home
+      home: const MainShell(),  
       debugShowCheckedModeBanner: false,
     );
   }
