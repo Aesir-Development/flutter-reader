@@ -84,10 +84,12 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
       '2': "Omniscient Reader's Viewpoint",
       '3': "A Stepmother's Märchen",
       '4': 'Black Cat and Soldier',
+      '5': 'Dungeon Reset',
       'solo-leveling': 'solo-leveling',
       "Omniscient Reader's Viewpoint": "Omniscient Reader's Viewpoint",
       "A Stepmother's Märchen": "A Stepmother's Märchen",
       'Black Cat and Soldier': 'black-cat-and-soldier',
+      'Dungeon Reset': 'dungeon-reset',
     };
     
     String result = idToKeyMap[idStr] ?? idStr;
@@ -104,6 +106,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
       "Omniscient Reader's Viewpoint": 'Bam enters the mysterious Tower to chase after his friend Rachel. The Tower tests those who enter with various trials, and those who reach the top are granted their deepest desires. Follow Bam as he climbs the Tower and discovers its secrets.',
       "A Stepmother's Märchen": 'A tale of a young',
       'black-cat-and-soldier': 'A gripping story of a soldier and his black cat companion navigating through a post-apocalyptic world filled with danger and intrigue.',
+      'Dungeon Reset': 'A thrilling adventure where the protagonist finds himself in a dungeon that resets every time he dies, forcing him to adapt and overcome challenges in a world filled with monsters and magic.',
     };
     
     return descriptions[manhwaKey] ?? 

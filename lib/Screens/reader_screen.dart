@@ -673,7 +673,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
       }
     }
 
-    if (Platform.isWindows) {
+    if (Platform.isWindows || Platform.isLinux) {
       // For Windows: Center the image with dark purple sidebars
       return LayoutBuilder(
         builder: (context, constraints) {

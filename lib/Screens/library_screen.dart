@@ -54,6 +54,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
       totalChapters: 50,
       coverUrl: 'https://via.placeholder.com/200x280/6c5ce7/ffffff?text=Black+Cat+and+Soldier',
     ),
+    Manhwa(
+      id: '5',
+      name: 'Dungeon Reset',
+      genre: 'Action, Adventure, Fantasy, Supernatural',
+      totalChapters: 143,
+      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/15/cover.jpg',
+    ),
     
   ];
 
