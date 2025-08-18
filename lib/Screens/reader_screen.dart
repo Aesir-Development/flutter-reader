@@ -39,7 +39,9 @@ class _ReaderScreenState extends State<ReaderScreen>
   
   // Debouncing and timing control
   DateTime? _lastLoadAttempt;
-  static const Duration _loadCooldown = Duration(seconds: 2);
+  static const Duration _loadCooldown = Duration(seconds: 10);
+  
+  bool _hasInitializedImages = false;
   
   @override
   void initState() {
@@ -47,7 +49,23 @@ class _ReaderScreenState extends State<ReaderScreen>
     _initializeControllers();
     _setupInitialChapter();
     _addListeners();
-    _preloadAdjacentChapters();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Now it's safe to call precacheImage because MediaQuery is available
+    if (!_hasInitializedImages) {
+      _hasInitializedImages = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          // Start prioritized preloading for the initial chapter
+          final initialChapter = _loadedChapters.first;
+          _startPrioritizedImageLoading(initialChapter);
+          _preloadAdjacentChapters();
+        }
+      });
+    }
   }
 
   void _initializeControllers() {
@@ -75,9 +93,6 @@ class _ReaderScreenState extends State<ReaderScreen>
     
     _loadedChapters.add(initialChapter);
     _currentVisibleChapterIndex = startingChapterIndex;
-    
-    // Start prioritized preloading for the initial chapter
-    _startPrioritizedImageLoading(initialChapter);
   }
 
   void _addListeners() {
@@ -195,6 +210,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (chapter.images.isEmpty) return;
     
     print('🚀 Starting prioritized loading for chapter ${chapter.chapterIndex + 1}');
+    print('📝 Total images to load: ${chapter.images.length}');
     
     // Initialize loading states
     final imageLoadingStates = <String, ImageLoadingState>{};
@@ -217,10 +233,28 @@ class _ReaderScreenState extends State<ReaderScreen>
     final priorityImages = chapter.images.take(priorityCount).toList();
     final remainingImages = chapter.images.skip(priorityCount).toList();
     
-    // Load priority images first (in parallel)
-    await Future.wait(
-      priorityImages.map((url) => _preloadSingleImage(url, isPriority: true))
-    );
+    print('⚡ Starting priority images: ${priorityImages.map((url) => url.split('/').last).toList()}');
+    
+    // Load priority images ONE BY ONE instead of in parallel to avoid blocking
+    for (int i = 0; i < priorityImages.length; i++) {
+      final imageUrl = priorityImages[i];
+      print('🔄 Loading priority image ${i + 1}/${priorityImages.length}: ${imageUrl.split('/').last}');
+      
+      try {
+        await _preloadSingleImage(imageUrl, isPriority: true);
+        print('✅ Priority image ${i + 1} completed: ${imageUrl.split('/').last}');
+      } catch (e) {
+        print('❌ Priority image ${i + 1} failed: ${imageUrl.split('/').last} - $e');
+        // Continue with next image even if this one fails
+      }
+      
+      // Small delay between priority images
+      if (i < priorityImages.length - 1) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    
+    print('⚡ All priority images processed, starting remaining images...');
     
     // Small delay before loading remaining images
     await Future.delayed(const Duration(milliseconds: 200));
@@ -228,9 +262,17 @@ class _ReaderScreenState extends State<ReaderScreen>
     // Load remaining images in batches of 2
     for (int i = 0; i < remainingImages.length; i += 2) {
       final batch = remainingImages.skip(i).take(2).toList();
-      await Future.wait(
-        batch.map((url) => _preloadSingleImage(url, isPriority: false))
-      );
+      print('🔄 Loading batch ${(i ~/ 2) + 1}: ${batch.map((url) => url.split('/').last).toList()}');
+      
+      // Load batch images one by one as well for better error handling
+      for (final url in batch) {
+        try {
+          await _preloadSingleImage(url, isPriority: false);
+          print('✅ Batch image loaded: ${url.split('/').last}');
+        } catch (e) {
+          print('❌ Batch image failed: ${url.split('/').last} - $e');
+        }
+      }
       
       // Small delay between batches to avoid overwhelming
       if (i + 2 < remainingImages.length) {
@@ -242,19 +284,26 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Future<void> _preloadSingleImage(String imageUrl, {required bool isPriority}) async {
+    print('🔍 _preloadSingleImage called for: ${imageUrl.split('/').last}, isPriority: $isPriority');
+    
     if (_preloadedImages.containsKey(imageUrl)) {
+      print('💾 Image already cached: ${imageUrl.split('/').last}');
       _updateImageLoadingState(imageUrl, ImageLoadingState.loaded);
       return;
     }
     
     try {
+      print('🔄 Starting load for: ${imageUrl.split('/').last}');
       _updateImageLoadingState(imageUrl, ImageLoadingState.loading);
       
       if (isPriority) {
+        print('⚡ Adding to priority loading set: ${imageUrl.split('/').last}');
         _priorityLoadingImages.add(imageUrl);
+        print('📊 Priority loading set size: ${_priorityLoadingImages.length}');
       }
       
       // Create image provider with CORS headers
+      print('🌐 Creating image provider for: ${imageUrl.split('/').last}');
       final imageProvider = NetworkImage(
         imageUrl,
         headers: {
@@ -266,30 +315,54 @@ class _ReaderScreenState extends State<ReaderScreen>
         },
       );
       
-      // Preload the image into Flutter's image cache
-      await precacheImage(imageProvider, context);
+      // Check if context is still mounted before preloading
+      if (!mounted) {
+        print('❌ Context not mounted, aborting load for: ${imageUrl.split('/').last}');
+        return;
+      }
+      
+      print('🔄 Calling precacheImage for: ${imageUrl.split('/').last}');
+      
+      // ADD TIMEOUT to prevent hanging
+      await Future.any([
+        precacheImage(imageProvider, context),
+        Future.delayed(const Duration(seconds: 30)), // 30 second timeout
+      ]);
+      
+      print('✅ precacheImage completed for: ${imageUrl.split('/').last}');
       
       // Store the provider for immediate use
       _preloadedImages[imageUrl] = imageProvider;
       _updateImageLoadingState(imageUrl, ImageLoadingState.loaded);
       
       if (isPriority) {
-        print('⚡ Priority image preloaded: ${imageUrl.split('/').last}');
+        print('⚡ Priority image preloaded successfully: ${imageUrl.split('/').last}');
       } else {
-        print('📸 Image preloaded: ${imageUrl.split('/').last}');
+        print('📸 Regular image preloaded successfully: ${imageUrl.split('/').last}');
       }
       
-    } catch (e) {
-      print('❌ Failed to preload image: $imageUrl - Error: $e');
+    } catch (e, stackTrace) {
+      print('❌ Failed to preload image: ${imageUrl.split('/').last}');
+      print('❌ Error: $e');
       _updateImageLoadingState(imageUrl, ImageLoadingState.error);
     } finally {
-      _priorityLoadingImages.remove(imageUrl);
+      if (isPriority) {
+        print('🧹 Removing from priority loading set: ${imageUrl.split('/').last}');
+        _priorityLoadingImages.remove(imageUrl);
+        print('📊 Priority loading set size after removal: ${_priorityLoadingImages.length}');
+      }
     }
   }
 
   void _updateImageLoadingState(String imageUrl, ImageLoadingState state) {
-    if (!mounted) return;
+    if (!mounted) {
+      print('❌ _updateImageLoadingState: Context not mounted for ${imageUrl.split('/').last}');
+      return;
+    }
     
+    print('🔄 Updating image state to $state for: ${imageUrl.split('/').last}');
+    
+    bool foundAndUpdated = false;
     for (int i = 0; i < _loadedChapters.length; i++) {
       final chapter = _loadedChapters[i];
       if (chapter.images.contains(imageUrl)) {
@@ -299,8 +372,16 @@ class _ReaderScreenState extends State<ReaderScreen>
         setState(() {
           _loadedChapters[i] = chapter.copyWith(imageLoadingStates: newStates);
         });
+        
+        print('✅ Updated state for ${imageUrl.split('/').last} in chapter ${chapter.chapterIndex + 1}');
+        foundAndUpdated = true;
         break;
       }
+    }
+    
+    if (!foundAndUpdated) {
+      print('❌ Could not find image ${imageUrl.split('/').last} in any loaded chapter');
+      print('📊 Current loaded chapters: ${_loadedChapters.map((c) => c.chapterIndex + 1).toList()}');
     }
   }
 
