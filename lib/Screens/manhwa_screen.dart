@@ -138,26 +138,64 @@ void _loadManhwaData() {
           },
         ),
       ],
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                const Color(0xFF6c5ce7),
-                const Color(0xFF6c5ce7).withOpacity(0.8),
-                const Color(0xFF2a2a2a),
+    flexibleSpace: FlexibleSpaceBar(
+      background: manhwa?.coverImageUrl != null
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.network(
+                  manhwa!.coverImageUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          const Color(0xFF6c5ce7),
+                          const Color(0xFF6c5ce7).withOpacity(0.8),
+                          const Color(0xFF2a2a2a),
+                        ],
+                      ),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.menu_book, size: 100, color: Colors.white),
+                    ),
+                  ),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.3),
+                        Colors.black.withOpacity(0.7),
+                      ],
+                    ),
+                  ),
+                ),
               ],
+            )
+          : Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    const Color(0xFF6c5ce7),
+                    const Color(0xFF6c5ce7).withOpacity(0.8),
+                    const Color(0xFF2a2a2a),
+                  ],
+                ),
+              ),
+              child: const Center(
+                child: Icon(Icons.menu_book, size: 100, color: Colors.white),
+              ),
             ),
-          ),
-          child: const Center(
-            child: Icon(Icons.menu_book, size: 100, color: Colors.white),
-          ),
-        ),
-      ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildManhwaInfo() {
     final description = _getManhwaDescription();
