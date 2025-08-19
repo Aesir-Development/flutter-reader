@@ -1,21 +1,7 @@
 import 'package:flutter/material.dart';
+import '../Data/manhwa_data.dart';
+import '../models/manwha.dart';
 import 'manhwa_screen.dart';
-
-class Manhwa {
-  final String id;
-  final String name;
-  final String genre;
-  final int totalChapters;
-  final String coverUrl;
-
-  Manhwa({
-    required this.id,
-    required this.name,
-    required this.genre,
-    required this.totalChapters,
-    required this.coverUrl,
-  });
-}
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({Key? key}) : super(key: key);
@@ -25,44 +11,13 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  final List<Manhwa> manhwas = [
-    Manhwa(
-      id: '1',
-      name: 'Solo Leveling',
-      genre: 'Action, Fantasy',
-      totalChapters: 179,
-      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/1/thumbnail.png',
-    ),
-    Manhwa(
-      id: '2',
-      name: "Omniscient Reader's Viewpoint",
-      genre: 'Adventure, Drama',
-      totalChapters: 588,
-      coverUrl: 'https://via.placeholder.com/200x280/a29bfe/ffffff?text=Tower+of+God',
-    ),
-    Manhwa(
-      id: '3',
-      name: "A Stepmother's Märchen",
-      genre: 'Fantasy, Romance',
-      totalChapters: 66,
-      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/37/thumbnail.png',
-    ),
-    Manhwa(
-      id: '4',
-      name: 'Black Cat and Soldier',
-      genre: 'Action, Drama',
-      totalChapters: 50,
-      coverUrl: 'https://via.placeholder.com/200x280/6c5ce7/ffffff?text=Black+Cat+and+Soldier',
-    ),
-    Manhwa(
-      id: '5',
-      name: 'Dungeon Reset',
-      genre: 'Action, Adventure, Fantasy, Supernatural',
-      totalChapters: 143,
-      coverUrl: 'https://cdn.flamecomics.xyz/uploads/images/series/15/cover.jpg',
-    ),
-    
-  ];
+  List<Manhwa> manhwas = [];
+
+  @override
+  void initState() {
+    super.initState();
+    manhwas = manhwaDatabase.values.toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,9 +55,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             builder: (context) => ManhwaScreen(
               manhwaId: manhwa.id,
               name: manhwa.name,
-              genre: manhwa.genre,
-             // totalChapters: manhwa.totalChapters,
-              //chapters: [], 
+              genre: manhwa.genreString,
             ),
           ),
         );
@@ -127,24 +80,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
               flex: 4,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                child: Image.network(
-                  manhwa.coverUrl,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    color: Colors.grey[800],
-                    child: const Center(
-                      child: Icon(Icons.broken_image, color: Colors.white70),
-                    ),
-                  ),
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      color: Colors.grey[900],
-                      child: const Center(child: CircularProgressIndicator()),
-                    );
-                  },
-                ),
+                child: manhwa.coverImageUrl != null
+                    ? Image.network(
+                        manhwa.coverImageUrl!,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        errorBuilder: (context, error, stackTrace) => _buildPlaceholderImage(manhwa),
+                        loadingBuilder: (context, child, progress) {
+                          if (progress == null) return child;
+                          return Container(
+                            color: Colors.grey[900],
+                            child: const Center(child: CircularProgressIndicator()),
+                          );
+                        },
+                      )
+                    : _buildPlaceholderImage(manhwa),
               ),
             ),
             // Info Section
@@ -170,7 +120,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          manhwa.genre,
+                          manhwa.genreString,
                           style: TextStyle(
                             color: Colors.grey[400],
                             fontSize: 10,
@@ -190,6 +140,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholderImage(Manhwa manhwa) {
+    return Container(
+      color: const Color(0xFF6c5ce7),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.menu_book, color: Colors.white, size: 32),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Text(
+                manhwa.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -242,6 +221,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       onTap: () {
         Navigator.pop(context);
+        setState(() {
+          switch (title) {
+            case 'Name (A-Z)':
+              manhwas.sort((a, b) => a.name.compareTo(b.name));
+              break;
+            case 'Total Chapters':
+              manhwas.sort((a, b) => b.totalChapters.compareTo(a.totalChapters));
+              break;
+            case 'Genre':
+              manhwas.sort((a, b) => a.genreString.compareTo(b.genreString));
+              break;
+            default:
+              break;
+          }
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Sorted by $title')),
         );

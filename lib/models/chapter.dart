@@ -32,4 +32,19 @@ class Chapter {
       images: images ?? this.images,
     );
   }
+
+  factory Chapter.fromPluginData(Map<String, dynamic> data) {
+    return Chapter(
+      number: data['number'] ?? 0,
+      title: data['title'] ?? 'Untitled Chapter',
+      releaseDate: data['releaseDate'] != null
+          ? DateTime.tryParse(data['releaseDate']) ?? DateTime.now()
+          : DateTime.now(),
+      isRead: data['isRead'] ?? false,
+      isDownloaded: data['isDownloaded'] ?? false,
+      images: data['images'] != null
+          ? List<String>.from(data['images'])
+          : [],
+    );
+  }
 }

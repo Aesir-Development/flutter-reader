@@ -1,10 +1,12 @@
+// screens/manhwa_screen.dart
 import 'package:flutter/material.dart';
-import '/data/manhwa_data.dart';
-import '/models/chapter.dart';
-import '/screens/reader_screen.dart';
+import '../Data/manhwa_data.dart';
+import '../models/manwha.dart';
+import '../models/chapter.dart';
+import '../screens/reader_screen.dart';
 
 class ManhwaScreen extends StatefulWidget {
-  final dynamic manhwaId; // Changed to dynamic to handle both String and int
+  final dynamic manhwaId;
   final String name;
   final String genre;
 
@@ -22,7 +24,7 @@ class ManhwaScreen extends StatefulWidget {
 class _ManhwaScreenState extends State<ManhwaScreen> {
   bool _isFavorite = false;
   bool _isDescriptionExpanded = false;
-  List<Chapter> chapters = []; // Initialize as empty list
+  Manhwa? manhwa;
   int _lastReadChapter = 0;
   bool _isLoading = true;
   String _sortType = 'Latest First';
@@ -33,118 +35,42 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     _loadManhwaData();
   }
 
-  void _loadManhwaData() {
+// In _ManhwaScreenState
+void _loadManhwaData() {
   setState(() => _isLoading = true);
   
-  // Convert manhwaId to the correct string key for lookup
-  String manhwaKey = _getManhwaKey(widget.manhwaId);
+  manhwa = getManhwaById(widget.manhwaId);
   
-  // Get chapters from manhwa_data.dart using the converted key
-  chapters = manhwaChapters[manhwaKey] ?? [];
-  
-  print('🔍 Looking for chapters with key: "$manhwaKey"');
-  print('📚 Found ${chapters.length} chapters');
-  
-  // Only load reading progress if chapters exist
-  if (chapters.isNotEmpty) {
+  if (manhwa != null) {
     _loadReadingProgress();
   }
   
   setState(() => _isLoading = false);
 }
 
-
-
   void _loadReadingProgress() {
-    // Simulate loading reading progress
-    // In a real app, you'd load this from local storage
-    _lastReadChapter = (chapters.length * 0.3).round();
+    if (manhwa == null) return;
     
-    // Mark chapters as read up to the last read chapter
-    for (int i = 0; i < _lastReadChapter && i < chapters.length; i++) {
-      chapters[i] = chapters[i].copyWith(isRead: true);
+    _lastReadChapter = (manhwa!.chapters.length * 0.3).round();
+    
+    final updatedChapters = <Chapter>[];
+    for (int i = 0; i < manhwa!.chapters.length; i++) {
+      final chapter = manhwa!.chapters[i];
+      updatedChapters.add(chapter.copyWith(
+        isRead: i < _lastReadChapter,
+        isDownloaded: i < (_lastReadChapter * 0.7).round(),
+      ));
     }
     
-    // Simulate some downloaded chapters
-    for (int i = 0; i < (_lastReadChapter * 0.7).round() && i < chapters.length; i++) {
-      chapters[i] = chapters[i].copyWith(isDownloaded: true);
-    }
+    manhwa = manhwa!.copyWith(chapters: updatedChapters);
   }
 
-  // Convert manhwaId (number or string) to the correct string key
-  String _getManhwaKey(dynamic manhwaId) {
-    print('🔑 _getManhwaKey called with: "$manhwaId" (${manhwaId.runtimeType})');
-    
-    // Convert to string first to handle both string and int
-    String idStr = manhwaId.toString();
-    
-    // Map string IDs to correct keys
-    final Map<String, String> idToKeyMap = {
-      '1': 'solo-leveling',
-      '2': "Omniscient Reader's Viewpoint",
-      '3': "A Stepmother's Märchen",
-      '4': 'Black Cat and Soldier',
-      '5': 'Dungeon Reset',
-      'solo-leveling': 'solo-leveling',
-      "Omniscient Reader's Viewpoint": "Omniscient Reader's Viewpoint",
-      "A Stepmother's Märchen": "A Stepmother's Märchen",
-      'Black Cat and Soldier': 'black-cat-and-soldier',
-      'Dungeon Reset': 'dungeon-reset',
-    };
-    
-    String result = idToKeyMap[idStr] ?? idStr;
-    print('🔑 Converted "$idStr" to "$result"');
-    return result;
-  }
-
-  String _getManhwaDescription() {
-    String manhwaKey = _getManhwaKey(widget.manhwaId);
-    
-    // Simple descriptions based on manhwa ID - you can expand this
-    final descriptions = {
-      'solo-leveling': 'In a world where hunters battle monsters that emerge from mysterious gates, Sung Jin-Woo is the weakest of all hunters. But when he finds himself trapped in a dungeon with high-level monsters, he discovers a mysterious quest log that gives him the power to level up in ways no one else can.',
-      "Omniscient Reader's Viewpoint": 'Bam enters the mysterious Tower to chase after his friend Rachel. The Tower tests those who enter with various trials, and those who reach the top are granted their deepest desires. Follow Bam as he climbs the Tower and discovers its secrets.',
-      "A Stepmother's Märchen": 'A tale of a young',
-      'black-cat-and-soldier': 'A gripping story of a soldier and his black cat companion navigating through a post-apocalyptic world filled with danger and intrigue.',
-      'Dungeon Reset': 'A thrilling adventure where the protagonist finds himself in a dungeon that resets every time he dies, forcing him to adapt and overcome challenges in a world filled with monsters and magic.',
-    };
-    
-    return descriptions[manhwaKey] ?? 
-        'An epic manhwa filled with adventure, action, and unforgettable characters. Follow the incredible journey through this captivating story.';
-  }
-
-  double _getManhwaRating() {
-    String manhwaKey = _getManhwaKey(widget.manhwaId);
-    
-    // You can expand this with actual ratings for each manhwa
-    final ratings = {
-      'solo-leveling': 4.9,
-      "Omniscient Reader's Viewpoint": 4.7,
-      "A Stepmother's Märchen": 4.8,
-      'black-cat-and-soldier': 4.6,
-    };
-    
-    return ratings[manhwaKey] ?? 4.8;
-  }
-
-  String _getManhwaStatus() {
-    String manhwaKey = _getManhwaKey(widget.manhwaId);
-    
-    // You can expand this with actual status for each manhwa
-    final statuses = {
-      'solo-leveling': 'Ongoing',
-      "Omniscient Reader's Viewpoint": 'Ongoing',
-      "A Stepmother's Märchen": 'Completed',
-      'black-cat-and-soldier': 'Completed',
-    };
-    
-    return statuses[manhwaKey] ?? 'Ongoing';
-  }
+  String _getManhwaDescription() => manhwa?.description ?? 'No description available.';
+  double _getManhwaRating() => manhwa?.rating ?? 4.5;
+  String _getManhwaStatus() => manhwa?.status ?? 'Unknown';
 
   @override
   Widget build(BuildContext context) {
-    print('🔧 Build called - chapters.length: ${chapters.length}'); // Debug line
-    
     if (_isLoading) {
       return Scaffold(
         backgroundColor: const Color(0xFF1a1a1a),
@@ -169,7 +95,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
               ],
             ),
           ),
-          _buildChapterList(),
+          SliverToBoxAdapter(child: _buildChapterList()),
         ],
       ),
     );
@@ -267,7 +193,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
           const SizedBox(height: 16),
           Row(
             children: [
-              _buildInfoChip(Icons.book, '${chapters.length} Chapters'),
+              _buildInfoChip(Icons.book, '${manhwa?.chapters.length ?? 0} Chapters'),
               const SizedBox(width: 12),
               _buildInfoChip(Icons.star, _getManhwaRating().toString()),
               const SizedBox(width: 12),
@@ -335,10 +261,107 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
+  Widget _buildActionButtons() {
+    if (manhwa == null || manhwa!.chapters.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2a2a2a),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.withOpacity(0.3)),
+          ),
+          child: Column(
+            children: [
+              Icon(Icons.info_outline, color: Colors.grey[400], size: 48),
+              const SizedBox(height: 12),
+              Text(
+                'No chapters available for ${widget.name}',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        children: [
+          if (_lastReadChapter > 0 && _lastReadChapter < manhwa!.chapters.length) ...[
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                onPressed: () => _navigateToReader(_lastReadChapter + 1),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6c5ce7),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.play_arrow, color: Colors.white),
+                label: Text(
+                  'Continue Reading - Chapter ${_lastReadChapter + 1}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _navigateToReader(1),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF6c5ce7)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.restart_alt, color: Color(0xFF6c5ce7)),
+                  label: const Text(
+                    'Start from Beginning',
+                    style: TextStyle(color: Color(0xFF6c5ce7), fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              if (manhwa!.chapters.isNotEmpty) ...[
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _navigateToReader(manhwa!.chapters.length),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.grey[600]!),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: Icon(Icons.skip_next, color: Colors.grey[400]),
+                    label: Text(
+                      'Latest Chapter',
+                      style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatsRow() {
-    final readChapters = chapters.where((c) => c.isRead).length;
-    final downloadedChapters = chapters.where((c) => c.isDownloaded).length;
-    final readingProgress = chapters.isNotEmpty ? (readChapters / chapters.length) : 0.0;
+    if (manhwa == null) return const SizedBox.shrink();
+    
+    final readChapters = manhwa!.chapters.where((c) => c.isRead).length;
+    final downloadedChapters = manhwa!.chapters.where((c) => c.isDownloaded).length;
+    final readingProgress = manhwa!.chapters.isNotEmpty ? (readChapters / manhwa!.chapters.length) : 0.0;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -353,7 +376,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildStatItem('Read', '$readChapters/${chapters.length}', Icons.check_circle),
+              _buildStatItem('Read', '$readChapters/${manhwa!.chapters.length}', Icons.check_circle),
               _buildStatItem('Downloaded', '$downloadedChapters', Icons.download_done),
               _buildStatItem('Progress', '${(readingProgress * 100).round()}%', Icons.trending_up),
             ],
@@ -394,134 +417,16 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  Widget _buildActionButtons() {
-    // Don't show buttons if no chapters are available
-    if (chapters.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2a2a2a),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.withOpacity(0.3)),
-          ),
-          child: Column(
-            children: [
-              Icon(Icons.info_outline, color: Colors.grey[400], size: 48),
-              const SizedBox(height: 12),
-              Text(
-                'No chapters available for ${widget.name}',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Please check back later for updates!',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          if (_lastReadChapter > 0 && _lastReadChapter < chapters.length) ...[
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: () => _navigateToReader(_lastReadChapter + 1),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6c5ce7),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                icon: const Icon(Icons.play_arrow, color: Colors.white),
-                label: Text(
-                  'Continue Reading - Chapter ${_lastReadChapter + 1}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _navigateToReader(1),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Color(0xFF6c5ce7)),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  icon: const Icon(Icons.restart_alt, color: Color(0xFF6c5ce7)),
-                  label: const Text(
-                    'Start from Beginning',
-                    style: TextStyle(
-                      color: Color(0xFF6c5ce7),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-              if (chapters.isNotEmpty) ...[
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _navigateToReader(chapters.length),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.grey[600]!),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    icon: Icon(Icons.skip_next, color: Colors.grey[400]),
-                    label: Text(
-                      'Latest Chapter',
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildChapterHeader() {
+    if (manhwa == null) return const SizedBox.shrink();
+    
     return Container(
       padding: const EdgeInsets.all(16.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            'Chapters (${chapters.length})',
+            'Chapters (${manhwa!.chapters.length})',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 18,
@@ -563,50 +468,38 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
   }
 
   Widget _buildChapterList() {
-    // Show message if no chapters available
-    if (chapters.isEmpty) {
-      return SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            children: [
-              Icon(
-                Icons.book_outlined,
-                size: 64,
-                color: Colors.grey[600],
+    if (manhwa == null || manhwa!.chapters.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          children: [
+            Icon(
+              Icons.book_outlined,
+              size: 64,
+              color: Colors.grey[600],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No chapters available yet',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
               ),
-              const SizedBox(height: 16),
-              Text(
-                'No chapters available yet',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 18,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Check manhwa_data.dart to add chapters for "${widget.manhwaId}"',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
 
-    return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final chapter = chapters[index];
-          return _buildChapterTile(chapter, index);
-        },
-        childCount: chapters.length,
-      ),
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: manhwa!.chapters.length,
+      itemBuilder: (context, index) {
+        final chapter = manhwa!.chapters[index];
+        return _buildChapterTile(chapter, index);
+      },
     );
   }
 
@@ -714,9 +607,11 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
   }
 
   void _navigateToReader(int chapterNumber) {
-    final selectedChapter = chapters.firstWhere(
+    if (manhwa == null) return;
+    
+    final selectedChapter = manhwa!.chapters.firstWhere(
       (c) => c.number == chapterNumber,
-      orElse: () => chapters.first,
+      orElse: () => manhwa!.chapters.first,
     );
 
     Navigator.push(
@@ -724,28 +619,28 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
       MaterialPageRoute(
         builder: (context) => ReaderScreen(
           chapter: selectedChapter,
-          allChapters: chapters,
+          allChapters: manhwa!.chapters,
         ),
       ),
     ).then((_) {
-      // Update reading progress when returning from reader
       setState(() {
         if (chapterNumber > _lastReadChapter) {
           _lastReadChapter = chapterNumber;
-          // Mark all chapters up to this one as read
-          for (int i = 0; i < chapterNumber && i < chapters.length; i++) {
-            chapters[i] = chapters[i].copyWith(isRead: true);
+          final updatedChapters = <Chapter>[];
+          for (int i = 0; i < manhwa!.chapters.length; i++) {
+            final chapter = manhwa!.chapters[i];
+            updatedChapters.add(chapter.copyWith(
+              isRead: i < chapterNumber,
+            ));
           }
+          manhwa = manhwa!.copyWith(chapters: updatedChapters);
         }
       });
-      
-      // In a real app, save reading progress to persistent storage
       _saveReadingProgress();
     });
   }
 
   void _saveReadingProgress() {
-    // TODO: Save reading progress to SharedPreferences or database
     print('Saving reading progress: Chapter $_lastReadChapter');
   }
 
@@ -836,14 +731,18 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
         Navigator.pop(context);
         setState(() {
           _sortType = title;
-          if (title == 'Oldest First') {
-            chapters.sort((a, b) => a.number.compareTo(b.number));
-          } else if (title == 'Latest First') {
-            chapters.sort((a, b) => b.number.compareTo(a.number));
-          } else if (title == 'Unread First') {
-            chapters.sort((a, b) => a.isRead ? 1 : -1);
-          } else if (title == 'Read First') {
-            chapters.sort((a, b) => a.isRead ? -1 : 1);
+          if (manhwa != null) {
+            final chapters = List<Chapter>.from(manhwa!.chapters);
+            if (title == 'Oldest First') {
+              chapters.sort((a, b) => a.number.compareTo(b.number));
+            } else if (title == 'Latest First') {
+              chapters.sort((a, b) => b.number.compareTo(a.number));
+            } else if (title == 'Unread First') {
+              chapters.sort((a, b) => a.isRead ? 1 : -1);
+            } else if (title == 'Read First') {
+              chapters.sort((a, b) => a.isRead ? -1 : 1);
+            }
+            manhwa = manhwa!.copyWith(chapters: chapters);
           }
         });
         ScaffoldMessenger.of(context).showSnackBar(
