@@ -45,13 +45,13 @@ class _MainShellState extends State<MainShell> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Align(
+          const Align(
             alignment: Alignment.centerLeft,
             child: Padding(
-              padding: const EdgeInsets.only(top: 8),
+              padding: EdgeInsets.only(top: 8),
             child: Text(
               'Library',
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
                 fontSize: 24,
                 fontWeight: FontWeight.bold,

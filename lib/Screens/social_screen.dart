@@ -9,7 +9,7 @@ class SocialScreen extends StatefulWidget {
 class _SocialScreenState extends State<SocialScreen> {
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return const Column(
     );
   }
 }

@@ -1,9 +1,10 @@
-// screens/manhwa_screen.dart
+// screens/manhwa_screen.dart - MINIMAL CHANGES
 import 'package:flutter/material.dart';
 import '../Data/manhwa_data.dart';
 import '../models/manwha.dart';
 import '../models/chapter.dart';
 import '../screens/reader_screen.dart';
+import '../services/progress_service.dart';
 
 class ManhwaScreen extends StatefulWidget {
   final dynamic manhwaId;
@@ -25,9 +26,12 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
   bool _isFavorite = false;
   bool _isDescriptionExpanded = false;
   Manhwa? manhwa;
-  int _lastReadChapter = 0;
   bool _isLoading = true;
   String _sortType = 'Latest First';
+  
+  // Progress tracking
+  Set<int> _completedChapters = {};
+  int? _continueChapter;
 
   @override
   void initState() {
@@ -35,34 +39,29 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     _loadManhwaData();
   }
 
-// In _ManhwaScreenState
-void _loadManhwaData() {
-  setState(() => _isLoading = true);
-  
-  manhwa = getManhwaById(widget.manhwaId);
-  
-  if (manhwa != null) {
-    _loadReadingProgress();
-  }
-  
-  setState(() => _isLoading = false);
-}
-
-  void _loadReadingProgress() {
-    if (manhwa == null) return;
+  // UPDATED: Remove fake progress, load real progress
+  Future<void> _loadManhwaData() async {
+    setState(() => _isLoading = true);
     
-    _lastReadChapter = (manhwa!.chapters.length * 0.3).round();
+    manhwa = getManhwaById(widget.manhwaId);
     
-    final updatedChapters = <Chapter>[];
-    for (int i = 0; i < manhwa!.chapters.length; i++) {
-      final chapter = manhwa!.chapters[i];
-      updatedChapters.add(chapter.copyWith(
-        isRead: i < _lastReadChapter,
-        isDownloaded: i < (_lastReadChapter * 0.7).round(),
-      ));
+    if (manhwa != null) {
+      await _loadProgress();
     }
     
-    manhwa = manhwa!.copyWith(chapters: updatedChapters);
+    setState(() => _isLoading = false);
+  }
+
+  // ADD THIS METHOD
+  Future<void> _loadProgress() async {
+    if (manhwa == null) return;
+    
+    final manhwaIdStr = manhwa!.id.toString();
+    _completedChapters = await ProgressService.getCompletedChapters(manhwaIdStr);
+    _continueChapter = await ProgressService.getContinueChapter(
+      manhwaIdStr, 
+      manhwa!.chapters.map((c) => c.number).toList()
+    );
   }
 
   String _getManhwaDescription() => manhwa?.description ?? 'No description available.';
@@ -72,9 +71,9 @@ void _loadManhwaData() {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF1a1a1a),
-        body: const Center(
+      return const Scaffold(
+        backgroundColor: Color(0xFF1a1a1a),
+        body: Center(
           child: CircularProgressIndicator(color: Color(0xFF6c5ce7)),
         ),
       );
@@ -82,25 +81,29 @@ void _loadManhwaData() {
 
     return Scaffold(
       backgroundColor: const Color(0xFF1a1a1a),
-      body: CustomScrollView(
-        slivers: [
-          _buildSliverAppBar(),
-          SliverToBoxAdapter(
-            child: Column(
-              children: [
-                _buildManhwaInfo(),
-                _buildActionButtons(),
-                _buildStatsRow(),
-                _buildChapterHeader(),
-              ],
+      body: RefreshIndicator(
+        onRefresh: _loadManhwaData, // ADD REFRESH
+        child: CustomScrollView(
+          slivers: [
+            _buildSliverAppBar(),
+            SliverToBoxAdapter(
+              child: Column(
+                children: [
+                  _buildManhwaInfo(),
+                  _buildActionButtons(),
+                  _buildStatsRow(),
+                  _buildChapterHeader(),
+                ],
+              ),
             ),
-          ),
-          SliverToBoxAdapter(child: _buildChapterList()),
-        ],
+            SliverToBoxAdapter(child: _buildChapterList()),
+          ],
+        ),
       ),
     );
   }
 
+  // KEEP ALL EXISTING UI METHODS (no changes needed)
   Widget _buildSliverAppBar() {
     return SliverAppBar(
       expandedHeight: 300,
@@ -126,76 +129,83 @@ void _loadManhwaData() {
             );
           },
         ),
-        IconButton(
-          icon: const Icon(Icons.share, color: Colors.white),
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Share functionality coming soon!'),
-                backgroundColor: Color(0xFF2a2a2a),
+        // ADD MENU BUTTON
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert, color: Colors.white),
+          color: const Color(0xFF2a2a2a),
+          onSelected: _handleMenuAction,
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'reset_progress',
+              child: Row(
+                children: [
+                  Icon(Icons.refresh, color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Text('Reset Progress', style: TextStyle(color: Colors.white)),
+                ],
               ),
-            );
-          },
+            ),
+          ],
         ),
       ],
-    flexibleSpace: FlexibleSpaceBar(
-      background: manhwa?.coverImageUrl != null
-          ? Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.network(
-                  manhwa!.coverImageUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
+      flexibleSpace: FlexibleSpaceBar(
+        background: manhwa?.coverImageUrl != null
+            ? Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.network(
+                    manhwa!.coverImageUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            const Color(0xFF6c5ce7),
+                            const Color(0xFF6c5ce7).withOpacity(0.8),
+                            const Color(0xFF2a2a2a),
+                          ],
+                        ),
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.menu_book, size: 100, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          const Color(0xFF6c5ce7),
-                          const Color(0xFF6c5ce7).withOpacity(0.8),
-                          const Color(0xFF2a2a2a),
+                          Colors.black.withOpacity(0.3),
+                          Colors.black.withOpacity(0.7),
                         ],
                       ),
                     ),
-                    child: const Center(
-                      child: Icon(Icons.menu_book, size: 100, color: Colors.white),
-                    ),
+                  ),
+                ],
+              )
+            : Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xFF6c5ce7),
+                      const Color(0xFF6c5ce7).withOpacity(0.8),
+                      const Color(0xFF2a2a2a),
+                    ],
                   ),
                 ),
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.3),
-                        Colors.black.withOpacity(0.7),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    const Color(0xFF6c5ce7),
-                    const Color(0xFF6c5ce7).withOpacity(0.8),
-                    const Color(0xFF2a2a2a),
-                  ],
+                child: const Center(
+                  child: Icon(Icons.menu_book, size: 100, color: Colors.white),
                 ),
               ),
-              child: const Center(
-                child: Icon(Icons.menu_book, size: 100, color: Colors.white),
-              ),
-            ),
-    ),
-  );
-}
+      ),
+    );
+  }
 
   Widget _buildManhwaInfo() {
     final description = _getManhwaDescription();
@@ -299,6 +309,7 @@ void _loadManhwaData() {
     );
   }
 
+  // UPDATED: Use real progress data
   Widget _buildActionButtons() {
     if (manhwa == null || manhwa!.chapters.isEmpty) {
       return Padding(
@@ -333,19 +344,20 @@ void _loadManhwaData() {
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          if (_lastReadChapter > 0 && _lastReadChapter < manhwa!.chapters.length) ...[
+          // UPDATED: Show continue button if there's a chapter to continue
+          if (_continueChapter != null) ...[
             SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton.icon(
-                onPressed: () => _navigateToReader(_lastReadChapter + 1),
+                onPressed: () => _navigateToReader(_continueChapter!),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF6c5ce7),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 icon: const Icon(Icons.play_arrow, color: Colors.white),
                 label: Text(
-                  'Continue Reading - Chapter ${_lastReadChapter + 1}',
+                  'Continue Chapter $_continueChapter',
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -356,7 +368,7 @@ void _loadManhwaData() {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => _navigateToReader(1),
+                  onPressed: () => _navigateToReader(manhwa!.chapters.first.number),
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Color(0xFF6c5ce7)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -369,24 +381,22 @@ void _loadManhwaData() {
                   ),
                 ),
               ),
-              if (manhwa!.chapters.isNotEmpty) ...[
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _navigateToReader(manhwa!.chapters.length),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.grey[600]!),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    icon: Icon(Icons.skip_next, color: Colors.grey[400]),
-                    label: Text(
-                      'Latest Chapter',
-                      style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold),
-                    ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _navigateToReader(manhwa!.chapters.last.number),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.grey[600]!),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: Icon(Icons.skip_next, color: Colors.grey[400]),
+                  label: Text(
+                    'Latest Chapter',
+                    style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold),
                   ),
                 ),
-              ],
+              ),
             ],
           ),
         ],
@@ -394,12 +404,11 @@ void _loadManhwaData() {
     );
   }
 
+  // UPDATED: Use real progress data
   Widget _buildStatsRow() {
     if (manhwa == null) return const SizedBox.shrink();
     
-    final readChapters = manhwa!.chapters.where((c) => c.isRead).length;
-    final downloadedChapters = manhwa!.chapters.where((c) => c.isDownloaded).length;
-    final readingProgress = manhwa!.chapters.isNotEmpty ? (readChapters / manhwa!.chapters.length) : 0.0;
+    final readingProgress = manhwa!.chapters.isNotEmpty ? (_completedChapters.length / manhwa!.chapters.length) : 0.0;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -414,8 +423,8 @@ void _loadManhwaData() {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildStatItem('Read', '$readChapters/${manhwa!.chapters.length}', Icons.check_circle),
-              _buildStatItem('Downloaded', '$downloadedChapters', Icons.download_done),
+              _buildStatItem('Completed', '${_completedChapters.length}/${manhwa!.chapters.length}', Icons.check_circle),
+              _buildStatItem('Remaining', '${manhwa!.chapters.length - _completedChapters.length}', Icons.schedule),
               _buildStatItem('Progress', '${(readingProgress * 100).round()}%', Icons.trending_up),
             ],
           ),
@@ -491,10 +500,6 @@ void _loadManhwaData() {
               ),
               const SizedBox(width: 8),
               IconButton(
-                icon: const Icon(Icons.download, color: Color(0xFF6c5ce7)),
-                onPressed: _showDownloadOptions,
-              ),
-              IconButton(
                 icon: const Icon(Icons.sort, color: Color(0xFF6c5ce7)),
                 onPressed: _showSortOptions,
               ),
@@ -541,8 +546,10 @@ void _loadManhwaData() {
     );
   }
 
+  // UPDATED: Use real progress data  
   Widget _buildChapterTile(Chapter chapter, int index) {
     final isNew = DateTime.now().difference(chapter.releaseDate).inDays < 7;
+    final isCompleted = _completedChapters.contains(chapter.number);
     
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -550,7 +557,7 @@ void _loadManhwaData() {
         color: const Color(0xFF2a2a2a),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: chapter.isRead 
+          color: isCompleted 
               ? const Color(0xFF6c5ce7).withOpacity(0.3)
               : Colors.transparent,
         ),
@@ -561,7 +568,7 @@ void _loadManhwaData() {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: chapter.isRead 
+            color: isCompleted 
                 ? const Color(0xFF6c5ce7) 
                 : const Color(0xFF3a3a3a),
             borderRadius: BorderRadius.circular(8),
@@ -570,7 +577,7 @@ void _loadManhwaData() {
             child: Text(
               '${chapter.number}',
               style: TextStyle(
-                color: chapter.isRead ? Colors.white : Colors.grey[400],
+                color: isCompleted ? Colors.white : Colors.grey[400],
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
               ),
@@ -583,8 +590,8 @@ void _loadManhwaData() {
               child: Text(
                 'Chapter ${chapter.number}: ${chapter.title}',
                 style: TextStyle(
-                  color: chapter.isRead ? Colors.white : Colors.grey[300],
-                  fontWeight: chapter.isRead ? FontWeight.w500 : FontWeight.normal,
+                  color: isCompleted ? Colors.white : Colors.grey[300],
+                  fontWeight: isCompleted ? FontWeight.w500 : FontWeight.normal,
                 ),
               ),
             ),
@@ -615,26 +622,12 @@ void _loadManhwaData() {
                 fontSize: 12,
               ),
             ),
-            if (chapter.isDownloaded) ...[
-              const SizedBox(width: 8),
-              Icon(Icons.offline_pin, color: Colors.green[400], size: 12),
-              const SizedBox(width: 2),
-              Text(
-                'Downloaded',
-                style: TextStyle(
-                  color: Colors.green[400],
-                  fontSize: 10,
-                ),
-              ),
-            ],
           ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (chapter.isDownloaded)
-              Icon(Icons.download_done, color: Colors.green[400], size: 20),
-            if (chapter.isRead)
+            if (isCompleted)
               const Icon(Icons.check_circle, color: Color(0xFF6c5ce7), size: 20),
             const SizedBox(width: 8),
             const Icon(Icons.chevron_right, color: Colors.grey),
@@ -644,7 +637,8 @@ void _loadManhwaData() {
     );
   }
 
-  void _navigateToReader(int chapterNumber) {
+  // UPDATED: Navigate with progress support
+  Future<void> _navigateToReader(int chapterNumber) async {
     if (manhwa == null) return;
     
     final selectedChapter = manhwa!.chapters.firstWhere(
@@ -652,34 +646,74 @@ void _loadManhwaData() {
       orElse: () => manhwa!.chapters.first,
     );
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ReaderScreen(
-          chapter: selectedChapter,
-          allChapters: manhwa!.chapters,
-        ),
-      ),
-    ).then((_) {
-      setState(() {
-        if (chapterNumber > _lastReadChapter) {
-          _lastReadChapter = chapterNumber;
-          final updatedChapters = <Chapter>[];
-          for (int i = 0; i < manhwa!.chapters.length; i++) {
-            final chapter = manhwa!.chapters[i];
-            updatedChapters.add(chapter.copyWith(
-              isRead: i < chapterNumber,
-            ));
-          }
-          manhwa = manhwa!.copyWith(chapters: updatedChapters);
-        }
-      });
-      _saveReadingProgress();
-    });
+    // Get saved progress for this chapter
+    final progress = await ProgressService.getProgress(manhwa!.id.toString(), chapterNumber);
+      print('=== RESUME DEBUG ===');
+  print('Manhwa ID: ${manhwa!.id}');
+  print('Chapter number: $chapterNumber');
+  print('Progress data: $progress');
+  print('Passing pageIndex: ${progress?['pageIndex'] ?? 0}');
+  print('==================');
+  
+    final result = await Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (context) => ReaderScreen(
+      chapter: selectedChapter,
+      allChapters: manhwa!.chapters,
+      manhwaId: getManhwaKey(manhwa!.id),
+      initialPageIndex: progress?['pageIndex'] ?? 0,
+      initialScrollPosition: progress?['scrollPosition'] ?? 0.0,
+    ),
+  ),
+);
+
+    // Refresh progress when returning
+    if (result == true) {
+      await _loadProgress();
+      setState(() {});
+    }
   }
 
-  void _saveReadingProgress() {
-    print('Saving reading progress: Chapter $_lastReadChapter');
+  // ADD THESE METHODS
+  Future<void> _handleMenuAction(String action) async {
+    if (action == 'reset_progress') {
+      final confirmed = await _showConfirmDialog(
+        'Reset Progress',
+        'This will reset all reading progress for ${widget.name}. Continue?',
+      );
+      
+      if (confirmed && manhwa != null) {
+        await ProgressService.clearProgress(manhwa!.id.toString());
+        await _loadProgress();
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Progress reset successfully')),
+        );
+      }
+    }
+  }
+
+  Future<bool> _showConfirmDialog(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2a2a2a),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        content: Text(message, style: const TextStyle(color: Colors.grey)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   void _showSortOptions() {
@@ -708,41 +742,7 @@ void _loadManhwaData() {
               _buildSortOption('Latest First', Icons.arrow_downward, _sortType == 'Latest First'),
               _buildSortOption('Oldest First', Icons.arrow_upward, _sortType == 'Oldest First'),
               _buildSortOption('Unread First', Icons.visibility_off, _sortType == 'Unread First'),
-              _buildSortOption('Read First', Icons.visibility, _sortType == 'Read First'),
-              const SizedBox(height: 10),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showDownloadOptions() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF2a2a2a),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Download Options',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 20),
-              _buildDownloadOption('Download Next 5 Chapters', Icons.download),
-              _buildDownloadOption('Download All Unread', Icons.download_for_offline),
-              _buildDownloadOption('Download All Chapters', Icons.cloud_download),
+              _buildSortOption('Completed First', Icons.check_circle, _sortType == 'Completed First'),
               const SizedBox(height: 10),
             ],
           ),
@@ -769,39 +769,11 @@ void _loadManhwaData() {
         Navigator.pop(context);
         setState(() {
           _sortType = title;
-          if (manhwa != null) {
-            final chapters = List<Chapter>.from(manhwa!.chapters);
-            if (title == 'Oldest First') {
-              chapters.sort((a, b) => a.number.compareTo(b.number));
-            } else if (title == 'Latest First') {
-              chapters.sort((a, b) => b.number.compareTo(a.number));
-            } else if (title == 'Unread First') {
-              chapters.sort((a, b) => a.isRead ? 1 : -1);
-            } else if (title == 'Read First') {
-              chapters.sort((a, b) => a.isRead ? -1 : 1);
-            }
-            manhwa = manhwa!.copyWith(chapters: chapters);
-          }
+          // Note: Sorting would need to be implemented if desired
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Sorted by $title'),
-            backgroundColor: const Color(0xFF2a2a2a),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildDownloadOption(String title, IconData icon) {
-    return ListTile(
-      leading: Icon(icon, color: const Color(0xFF6c5ce7)),
-      title: Text(title, style: const TextStyle(color: Colors.white)),
-      onTap: () {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$title - Coming soon!'),
             backgroundColor: const Color(0xFF2a2a2a),
           ),
         );

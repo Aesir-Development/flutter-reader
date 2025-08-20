@@ -3,7 +3,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import '/models/chapter.dart';
 import 'dart:io' show Platform;
-
+import '../services/progress_service.dart';
+import 'dart:async';
+import '../Data/manhwa_data.dart';
 enum ImageLoadingState { waiting, loading, loaded, error }
 
 class _LoadedChapter {
@@ -32,11 +34,16 @@ class _LoadedChapter {
 class ReaderScreen extends StatefulWidget {
   final Chapter chapter;
   final List<Chapter> allChapters;
-
+  final int initialPageIndex;       
+  final double initialScrollPosition; 
+  final String manhwaId;
   const ReaderScreen({
     Key? key,
     required this.chapter,
     required this.allChapters,
+    required this.manhwaId,
+    this.initialPageIndex = 0,        
+    this.initialScrollPosition = 0.0, 
   }) : super(key: key);
 
   @override
@@ -60,39 +67,161 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   int _currentVisibleChapterIndex = 0;
   final Map<String, ImageProvider> _preloadedImages = {};
   bool _hasInitializedImages = false;
+  int _currentPageIndex = 0;
+  String? _manhwaId;
+  Timer? _progressSaveTimer;
+  bool _hasScrolledToInitialPosition = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _appBarAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    )..forward();
-    startingChapterIndex = widget.allChapters.indexWhere((c) => c.number == widget.chapter.number);
-    if (startingChapterIndex == -1) startingChapterIndex = 0;
-    _loadedChapters.add(_LoadedChapter(
-      chapterIndex: startingChapterIndex,
-      chapter: widget.allChapters[startingChapterIndex],
-      images: widget.allChapters[startingChapterIndex].images,
-      imageLoadingStates: {},
-    ));
-    _currentVisibleChapterIndex = startingChapterIndex;
-    _scrollController.addListener(_scrollListener);
-  }
+@override
+void initState() {
+ super.initState();
+ print('=== INIT STATE START ===');
+ 
+ _appBarAnimationController = AnimationController(
+   duration: const Duration(milliseconds: 300),
+   vsync: this,
+ )..forward();
+ 
+ startingChapterIndex = widget.allChapters.indexWhere((c) => c.number == widget.chapter.number);
+ if (startingChapterIndex == -1) startingChapterIndex = 0;
+ 
+ _loadedChapters.add(_LoadedChapter(
+   chapterIndex: startingChapterIndex,
+   chapter: widget.allChapters[startingChapterIndex],
+   images: widget.allChapters[startingChapterIndex].images,
+   imageLoadingStates: {},
+ ));
+ 
+ _currentVisibleChapterIndex = startingChapterIndex;
+ _scrollController.addListener(_scrollListener);
+ _currentPageIndex = widget.initialPageIndex;
+ 
+ print('About to call _extractManhwaId()');
+ _manhwaId = _extractManhwaId();
+ print('_extractManhwaId() returned: $_manhwaId');
+ print('=== INIT STATE END ===');
+}
+String? _extractManhwaId() {
+  return widget.manhwaId; // Use the passed ID directly
+}
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (!_hasInitializedImages) {
-      _hasInitializedImages = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _preloadChapterImages(_loadedChapters.first);
-          _preloadAdjacentChapters();
+void _scrollToInitialPosition() {
+  print('=== SCROLL TO POSITION ===');
+  print('Initial page index: ${widget.initialPageIndex}');
+  print('Initial scroll position: ${widget.initialScrollPosition}');
+  
+  if (widget.initialPageIndex > 0) {
+    // Wait for images to load first
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && _scrollController.hasClients) {
+          // Use the same height calculation as your _updateCurrentPage method
+          const averageImageHeight = 800.0;
+          final targetOffset = widget.initialPageIndex * averageImageHeight;
+          
+          print('Calculated target offset: $targetOffset');
+          print('Max scroll extent: ${_scrollController.position.maxScrollExtent}');
+          print('Final scroll position: ${targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent)}');
+          
+          _scrollController.animateTo(
+            targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+            duration: const Duration(milliseconds: 800),
+            curve: Curves.easeInOut,
+          );
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Resumed from page ${widget.initialPageIndex + 1}'),
+              duration: const Duration(seconds: 2),
+              backgroundColor: const Color(0xFF6c5ce7),
+            ),
+          );
+        } else {
+          print('ScrollController not ready: mounted=$mounted, hasClients=${_scrollController.hasClients}');
         }
       });
+    });
+    _hasScrolledToInitialPosition = true;
+  }
+  print('========================');
+}
+
+void _updateCurrentPage(double offset) {
+  const averageImageHeight = 800.0;
+  final totalImages = widget.chapter.images.length;
+  
+  if (totalImages == 0) return;
+  
+  final newPageIndex = (offset / averageImageHeight).floor().clamp(0, totalImages - 1);
+  
+  print('Scroll offset: $offset, calculated page: $newPageIndex, current page: $_currentPageIndex');
+  
+  if (newPageIndex != _currentPageIndex) {
+    _currentPageIndex = newPageIndex;
+    print('Page changed to: $_currentPageIndex');
+    _scheduleProgressSave();
+  }
+}
+
+void _scheduleProgressSave() {
+  _progressSaveTimer?.cancel();
+  _progressSaveTimer = Timer(const Duration(seconds: 2), () {
+    _saveCurrentProgress();
+  });
+}
+
+Future<void> _saveCurrentProgress() async {
+  if (_manhwaId == null) return;
+  
+  print('=== SAVING PROGRESS ===');
+  print('Manhwa ID: $_manhwaId');
+  print('Chapter: ${widget.chapter.number}');
+  print('Page: $_currentPageIndex');
+  print('Storage key: progress_${_manhwaId}_${widget.chapter.number}');
+  
+  await ProgressService.saveProgress(
+    _manhwaId!,
+    widget.chapter.number,
+    _currentPageIndex,
+    0.0,
+  );
+  
+  print('Progress saved successfully');
+  print('=====================');
+
+  if (_currentPageIndex >= widget.chapter.images.length - 1) {
+    await ProgressService.markCompleted(_manhwaId!, widget.chapter.number);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Text('Chapter ${widget.chapter.number} completed!'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
+}
+@override
+void didChangeDependencies() {
+  super.didChangeDependencies();
+  if (!_hasInitializedImages) {
+    _hasInitializedImages = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _preloadChapterImages(_loadedChapters.first);
+        _preloadAdjacentChapters();
+        if (!_hasScrolledToInitialPosition) _scrollToInitialPosition(); // ADD THIS LINE
+      }
+    });
+  }
+}
 
   void _scrollListener() {
     final offset = _scrollController.offset;
@@ -117,6 +246,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
     if (offset >= maxExtent - 1000 && _shouldLoadNextChapter()) {
       _loadNextChapter();
     }
+    _updateCurrentPage(offset);
   }
 
   void _updateCurrentVisibleChapter() {
@@ -336,7 +466,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
                     setState(() => setModalState(() => _vibrationFeedback = value));
                     if (value) HapticFeedback.mediumImpact();
                   },
-                  activeColor: const Color(0xFF6c5ce7),
+                  activeThumbColor: const Color(0xFF6c5ce7),
                 ),
               ),
             ],
@@ -380,13 +510,15 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
     );
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _appBarAnimationController.dispose();
-    _preloadedImages.clear();
-    super.dispose();
-  }
+@override
+void dispose() {
+  _progressSaveTimer?.cancel();
+  _saveCurrentProgress();
+  _scrollController.dispose();
+  _appBarAnimationController.dispose();
+  _preloadedImages.clear();
+  super.dispose();
+}
 
   @override
   Widget build(BuildContext context) {
@@ -441,7 +573,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
         ),
       ),
       body: Container(
-        color: Platform.isWindows ? Color(0xFF2a1a3a) : Colors.black.withOpacity(1.0 - _brightness),
+        color: Platform.isWindows ? const Color(0xFF2a1a3a) : Colors.black.withOpacity(1.0 - _brightness),
         child: Stack(
           children: [
             GestureDetector(
@@ -465,7 +597,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
               top: kToolbarHeight + MediaQuery.of(context).padding.top,
               left: 0,
               right: 0,
-              child: Container(
+              child: SizedBox(
                 height: 3,
                 child: LinearProgressIndicator(
                   value: _scrollProgress,
@@ -684,18 +816,18 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
               // Left sidebar (dark purple)
               Expanded(
                 child: Container(
-                  color: Color(0xFF2a1a3a), // Dark purple background
+                  color: const Color(0xFF2a1a3a), // Dark purple background
                 ),
               ),
               // Centered image
-              Container(
+              SizedBox(
                 width: maxImageWidth.toDouble(),
                 child: buildImageContent(disableMouseZoom: true),
               ),
               // Right sidebar (dark purple)
               Expanded(
                 child: Container(
-                  color: Color(0xFF2a1a3a), // Dark purple background
+                  color: const Color(0xFF2a1a3a), // Dark purple background
                 ),
               ),
             ],
