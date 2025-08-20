@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../Data/manhwa_data.dart';
+import '../services/manhwa_service.dart';
 import '../models/manwha.dart';
 import '../models/chapter.dart';
 import '../screens/reader_screen.dart';
@@ -38,20 +38,29 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     _loadManhwaData();
   }
 
-  // UPDATED: Remove fake progress, load real progress
   Future<void> _loadManhwaData() async {
     setState(() => _isLoading = true);
     
-    manhwa = getManhwaById(widget.manhwaId);
-    
-    if (manhwa != null) {
-      await _loadProgress();
+    try {
+      // Use ManhwaService instead of legacy data
+      manhwa = await ManhwaService.getManhwaById(widget.manhwaId.toString());
+      
+      if (manhwa != null) {
+        await _loadProgress();
+      }
+    } catch (e) {
+      print('Error loading manhwa data: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load manhwa: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
     
     setState(() => _isLoading = false);
   }
 
-  // ADD THIS METHOD
   Future<void> _loadProgress() async {
     if (manhwa == null) return;
     
@@ -78,10 +87,71 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
       );
     }
 
+    if (manhwa == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF1a1a1a),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF2a2a2a),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: Text(
+            widget.name,
+            style: const TextStyle(color: Colors.white),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline,
+                size: 64,
+                color: Colors.grey[600],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Manhwa not found',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Could not load "${widget.name}"',
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: _loadManhwaData,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6c5ce7),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                label: const Text(
+                  'Retry',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF1a1a1a),
       body: RefreshIndicator(
-        onRefresh: _loadManhwaData, // ADD REFRESH
+        onRefresh: _loadManhwaData,
         child: CustomScrollView(
           slivers: [
             _buildSliverAppBar(),
@@ -102,7 +172,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  // KEEP ALL EXISTING UI METHODS (no changes needed)
   Widget _buildSliverAppBar() {
     return SliverAppBar(
       expandedHeight: 300,
@@ -128,7 +197,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
             );
           },
         ),
-        // ADD MENU BUTTON
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert, color: Colors.white),
           color: const Color(0xFF2a2a2a),
@@ -308,7 +376,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  // UPDATED: Use real progress data
   Widget _buildActionButtons() {
     if (manhwa == null || manhwa!.chapters.isEmpty) {
       return Padding(
@@ -343,7 +410,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          // UPDATED: Show continue button if there's a chapter to continue
           if (_continueChapter != null) ...[
             SizedBox(
               width: double.infinity,
@@ -403,7 +469,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  // UPDATED: Use real progress data
   Widget _buildStatsRow() {
     if (manhwa == null) return const SizedBox.shrink();
     
@@ -545,7 +610,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  // UPDATED: Use real progress data  
   Widget _buildChapterTile(Chapter chapter, int index) {
     final isNew = DateTime.now().difference(chapter.releaseDate).inDays < 7;
     final isCompleted = _completedChapters.contains(chapter.number);
@@ -636,7 +700,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  // UPDATED: Navigate with progress support
   Future<void> _navigateToReader(int chapterNumber) async {
     if (manhwa == null) return;
     
@@ -647,25 +710,25 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
 
     // Get saved progress for this chapter
     final progress = await ProgressService.getProgress(manhwa!.id.toString(), chapterNumber);
-      print('=== RESUME DEBUG ===');
-  print('Manhwa ID: ${manhwa!.id}');
-  print('Chapter number: $chapterNumber');
-  print('Progress data: $progress');
-  print('Passing pageIndex: ${progress?['pageIndex'] ?? 0}');
-  print('==================');
-  
+    print('=== RESUME DEBUG ===');
+    print('Manhwa ID: ${manhwa!.id}');
+    print('Chapter number: $chapterNumber');
+    print('Progress data: $progress');
+    print('Passing pageIndex: ${progress?['pageIndex'] ?? 0}');
+    print('==================');
+    
     final result = await Navigator.push(
-  context,
-  MaterialPageRoute(
-    builder: (context) => ReaderScreen(
-      chapter: selectedChapter,
-      allChapters: manhwa!.chapters,
-      manhwaId: getManhwaKey(manhwa!.id),
-      initialPageIndex: progress?['pageIndex'] ?? 0,
-      initialScrollPosition: progress?['scrollPosition'] ?? 0.0,
-    ),
-  ),
-);
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReaderScreen(
+          chapter: selectedChapter,
+          allChapters: manhwa!.chapters,
+          manhwaId: manhwa!.id.toString(), // Use the manhwa ID directly
+          initialPageIndex: progress?['pageIndex'] ?? 0,
+          initialScrollPosition: progress?['scrollPosition'] ?? 0.0,
+        ),
+      ),
+    );
 
     // Refresh progress when returning
     if (result == true) {
@@ -674,7 +737,6 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     }
   }
 
-  // ADD THESE METHODS
   Future<void> _handleMenuAction(String action) async {
     if (action == 'reset_progress') {
       final confirmed = await _showConfirmDialog(

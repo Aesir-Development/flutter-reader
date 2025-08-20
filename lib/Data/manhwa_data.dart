@@ -1,6 +1,8 @@
-// data/manhwa_data.dart
 import '../models/manwha.dart';
 import '../models/chapter.dart';
+import '../services/manhwa_service.dart';
+import '../services/migration.dart';
+import 'package:sqflite/sqflite.dart';
 
 final Map<String, Manhwa> manhwaDatabase = {
   'solo-leveling': Manhwa(
@@ -1556,7 +1558,67 @@ Chapter(
           "https://gg.asuracomic.net/storage/media/49/conversions/62df3d3f-optimized.webp",
         ],
       ),
-      
+      Chapter(
+        number: 6,
+        title: "The Extra’s Academy Survival Guide Asura Scans",
+        releaseDate: DateTime(2025, 8, 20),
+        isRead: false,
+        isDownloaded: false,
+        images: [
+          "https://gg.asuracomic.net/storage/media/180447/conversions/01-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180485/conversions/02-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180528/conversions/03-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180558/conversions/04-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180588/conversions/05-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180621/conversions/06-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180664/conversions/07-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180697/conversions/08-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180734/conversions/09-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180768/conversions/10-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180803/conversions/11-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180825/conversions/12-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180856/conversions/13-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180881/conversions/14-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/180902/conversions/15-optimized.webp",
+          "https://asuracomic.net/images/EndDesign.webp",
+          "https://gg.asuracomic.net/storage/media/272496/conversions/01JMHFP0DBPD906JMCZNAKG1RH-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/316680/conversions/01JWCZWMSHZA9GC005W65PMXGY-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/26/conversions/e67cec65-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/267698/conversions/01JJST2HQ54CXEV2YQN2621FTB-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/49/conversions/62df3d3f-optimized.webp",
+          "https://asuracomic.net/images/google.webp",
+        ],
+      ),
+      Chapter(
+        number: 7,
+        title: "The Extra’s Academy Survival Guide Asura Scans",
+        releaseDate: DateTime(2025, 8, 20),
+        isRead: false,
+        isDownloaded: false,
+        images: [
+          "https://gg.asuracomic.net/storage/media/172831/conversions/01-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/172867/conversions/02-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/172890/conversions/03-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/172919/04.jpg",
+          "https://gg.asuracomic.net/storage/media/172998/conversions/05-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173029/conversions/06-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173055/conversions/07-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173093/08.jpg",
+          "https://gg.asuracomic.net/storage/media/173198/conversions/09-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173226/conversions/10-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173252/11.jpg",
+          "https://gg.asuracomic.net/storage/media/173336/conversions/12-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173370/13.jpg",
+          "https://gg.asuracomic.net/storage/media/173492/conversions/14-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/173519/conversions/15-optimized.webp",
+          "https://asuracomic.net/images/EndDesign.webp",
+          "https://gg.asuracomic.net/storage/media/272496/conversions/01JMHFP0DBPD906JMCZNAKG1RH-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/316680/conversions/01JWCZWMSHZA9GC005W65PMXGY-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/26/conversions/e67cec65-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/267698/conversions/01JJST2HQ54CXEV2YQN2621FTB-optimized.webp",
+          "https://gg.asuracomic.net/storage/media/49/conversions/62df3d3f-optimized.webp",
+        ],
+      ),
       ]
       
   ),
@@ -1871,7 +1933,6 @@ Chapter(
     ],
   ),
 };
-
 // Helper functions for data access
 String getManhwaKey(dynamic manhwaId) {
   String idStr = manhwaId.toString();
@@ -1891,7 +1952,7 @@ String getManhwaKey(dynamic manhwaId) {
   return idToKeyMap[idStr] ?? idStr;
 }
 
-// Helper function to get manhwa by ID
+// Helper function to get manhwa by ID (in-memory fallback)
 Manhwa? getManhwaById(dynamic manhwaId) {
   String key = getManhwaKey(manhwaId);
   return manhwaDatabase[key];

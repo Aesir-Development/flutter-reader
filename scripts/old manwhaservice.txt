@@ -1,0 +1,585 @@
+// services/manhwa_service.dart
+import 'dart:async';
+import 'dart:io';
+import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:path/path.dart';
+import '../models/manwha.dart';
+import '../models/chapter.dart';
+import '../Data/manhwa_data.txt' as legacy_data;
+
+class ManhwaService {
+  static Database? _database;
+  static bool _initialized = false;
+  static bool _factoryInitialized = false;
+  static final Map<String, Manhwa> _cache = {};
+
+  // Initialize the correct database factory for the platform
+  static void _initializeDatabaseFactory() {
+    if (_factoryInitialized) return;
+    
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      // Desktop platforms need sqflite_ffi
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+      print('Initialized FFI database factory for desktop platform');
+    }
+    // Mobile platforms (Android/iOS) use the default sqflite
+    _factoryInitialized = true;
+  }
+
+  // Initialize database
+  static Future<Database> get database async {
+    // IMPORTANT: Initialize factory FIRST, before any database operations
+    _initializeDatabaseFactory();
+    
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
+  }
+
+  static Future<Database> _initDatabase() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'manhwa_database.db');
+    
+    print('Database path: $path');
+
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        print('Creating database tables...');
+        
+        // Create manhwas table
+        await db.execute('''
+          CREATE TABLE manhwas (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            genres TEXT,
+            rating REAL DEFAULT 0.0,
+            status TEXT,
+            author TEXT,
+            artist TEXT,
+            cover_image_url TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        ''');
+
+        // Create chapters table
+        await db.execute('''
+          CREATE TABLE chapters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            manhwa_id TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            release_date TEXT NOT NULL,
+            is_read BOOLEAN DEFAULT FALSE,
+            is_downloaded BOOLEAN DEFAULT FALSE,
+            images TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
+            UNIQUE(manhwa_id, number)
+          )
+        ''');
+
+        // Create indexes
+        await db.execute('CREATE INDEX idx_manhwa_chapters ON chapters(manhwa_id, number)');
+        await db.execute('CREATE INDEX idx_chapter_read_status ON chapters(manhwa_id, is_read)');
+        
+        print('Database tables created successfully!');
+      },
+    );
+  }
+
+  // Initialize the service and migrate data if needed
+  static Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    
+    // Initialize database factory first
+    _initializeDatabaseFactory();
+    
+    try {
+      // Check if database has data, migrate if empty
+      await _runMigrationIfNeeded();
+      _initialized = true;
+    } catch (e) {
+      print('ManhwaService initialization failed: $e');
+      rethrow;
+    }
+  }
+
+  // Check if SQLite database has any data
+  static Future<bool> _isDatabasePopulated() async {
+    try {
+      final db = await database;
+      final result = await db.rawQuery('SELECT COUNT(*) as count FROM manhwas');
+      return (Sqflite.firstIntValue(result) ?? 0) > 0;
+    } catch (e) {
+      print('Error checking if database is populated: $e');
+      return false;
+    }
+  }
+
+  // Run migration if database is empty
+  static Future<void> _runMigrationIfNeeded() async {
+    try {
+      final isPopulated = await _isDatabasePopulated();
+      
+      if (isPopulated) {
+        print('Database already has data, skipping migration');
+        return;
+      }
+
+      print('Database is empty, starting migration...');
+      await _migrateAllData();
+      
+    } catch (e) {
+      print('Migration check failed: $e');
+      await _migrateAllData();
+    }
+  }
+
+  static Future<void> _migrateAllData() async {
+    try {
+      print('Migrating ${legacy_data.manhwaDatabase.length} manhwas...');
+      
+      int successCount = 0;
+      for (final entry in legacy_data.manhwaDatabase.entries) {
+        try {
+          await _saveManhwa(entry.value);
+          successCount++;
+          print('✓ Migrated: ${entry.value.name}');
+        } catch (e) {
+          print('✗ Failed to migrate ${entry.value.name}: $e');
+        }
+      }
+      
+      print('Migration completed: $successCount/${legacy_data.manhwaDatabase.length} manhwas');
+      
+    } catch (e) {
+      print('Migration failed: $e');
+      rethrow;
+    }
+  }
+
+  // Helper methods for JSON encoding/decoding
+  static String _encodeStringList(List<String> list) {
+    return list.join('|');
+  }
+
+  static List<String> _decodeStringList(String? encoded) {
+    if (encoded == null || encoded.isEmpty) return [];
+    return encoded.split('|').where((s) => s.isNotEmpty).toList();
+  }
+
+  // Save a manhwa to database
+  static Future<void> _saveManhwa(Manhwa manhwa) async {
+    final db = await database;
+    
+    await db.insert(
+      'manhwas',
+      {
+        'id': manhwa.id,
+        'name': manhwa.name,
+        'description': manhwa.description,
+        'genres': _encodeStringList(manhwa.genres),
+        'rating': manhwa.rating,
+        'status': manhwa.status,
+        'author': manhwa.author,
+        'artist': manhwa.artist,
+        'cover_image_url': manhwa.coverImageUrl,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    // Save chapters
+    for (final chapter in manhwa.chapters) {
+      await _saveChapter(manhwa.id, chapter);
+    }
+
+    // Update cache
+    _cache[manhwa.id] = manhwa;
+  }
+
+  // Save a single chapter
+  static Future<void> _saveChapter(String manhwaId, Chapter chapter) async {
+    final db = await database;
+    
+    await db.insert(
+      'chapters',
+      {
+        'manhwa_id': manhwaId,
+        'number': chapter.number,
+        'title': chapter.title,
+        'release_date': chapter.releaseDate.toIso8601String(),
+        'is_read': chapter.isRead ? 1 : 0,
+        'is_downloaded': chapter.isDownloaded ? 1 : 0,
+        'images': _encodeStringList(chapter.images),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  // Get all manhwas from library
+  static Future<List<Manhwa>> getAllManhwa() async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      final manhwaResults = await db.query('manhwas', orderBy: 'name ASC');
+      final List<Manhwa> manhwas = [];
+
+      for (final manhwaData in manhwaResults) {
+        final id = manhwaData['id'] as String;
+        
+        // Check cache first
+        if (_cache.containsKey(id)) {
+          manhwas.add(_cache[id]!);
+          continue;
+        }
+
+        // Get chapters for this manhwa
+        final chapterResults = await db.query(
+          'chapters',
+          where: 'manhwa_id = ?',
+          whereArgs: [id],
+          orderBy: 'number ASC',
+        );
+
+        final chapters = chapterResults.map((row) => Chapter(
+          number: row['number'] as int,
+          title: row['title'] as String,
+          releaseDate: DateTime.parse(row['release_date'] as String),
+          isRead: (row['is_read'] as int) == 1,
+          isDownloaded: (row['is_downloaded'] as int) == 1,
+          images: _decodeStringList(row['images'] as String?),
+        )).toList();
+
+        final manhwa = Manhwa(
+          id: id,
+          name: manhwaData['name'] as String,
+          description: manhwaData['description'] as String? ?? '',
+          genres: _decodeStringList(manhwaData['genres'] as String?),
+          rating: (manhwaData['rating'] as num?)?.toDouble() ?? 0.0,
+          status: manhwaData['status'] as String? ?? 'Unknown',
+          author: manhwaData['author'] as String? ?? 'Unknown',
+          artist: manhwaData['artist'] as String? ?? 'Unknown',
+          coverImageUrl: manhwaData['cover_image_url'] as String?,
+          chapters: chapters,
+        );
+
+        _cache[id] = manhwa;
+        manhwas.add(manhwa);
+      }
+
+      return manhwas;
+    } catch (e) {
+      print('Failed to get all manhwa from SQLite: $e');
+      // Fallback to legacy data
+      return legacy_data.manhwaDatabase.values.toList();
+    }
+  }
+
+  static Future<List<String>> getManhwaKeys() async {
+    await _ensureInitialized();
+    try {
+      final db = await database;
+      final results = await db.query('manhwas', columns: ['id']);
+      return results.map((row) => row['id'] as String).toList();
+    } catch (e) {
+      print('Failed to get manhwa keys: $e');
+      return [];
+    }
+  }
+
+  // Delete a manhwa by ID (reuses removeFromLibrary)
+  static Future<void> deleteManhwa(String manhwaId) async {
+    await removeFromLibrary(manhwaId);
+  }
+
+  // Get manhwa by ID
+  static Future<Manhwa?> getManhwaById(String id) async {
+    await _ensureInitialized();
+    
+    try {
+      // Check cache first
+      if (_cache.containsKey(id)) {
+        return _cache[id];
+      }
+
+      final db = await database;
+      
+      // Get manhwa data
+      final manhwaResults = await db.query(
+        'manhwas',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+
+      if (manhwaResults.isEmpty) {
+        // Fallback to legacy data
+        return legacy_data.getManhwaById(id);
+      }
+
+      final manhwaData = manhwaResults.first;
+
+      // Get chapters
+      final chapterResults = await db.query(
+        'chapters',
+        where: 'manhwa_id = ?',
+        whereArgs: [id],
+        orderBy: 'number ASC',
+      );
+
+      final chapters = chapterResults.map((row) => Chapter(
+        number: row['number'] as int,
+        title: row['title'] as String,
+        releaseDate: DateTime.parse(row['release_date'] as String),
+        isRead: (row['is_read'] as int) == 1,
+        isDownloaded: (row['is_downloaded'] as int) == 1,
+        images: _decodeStringList(row['images'] as String?),
+      )).toList();
+
+      final manhwa = Manhwa(
+        id: manhwaData['id'] as String,
+        name: manhwaData['name'] as String,
+        description: manhwaData['description'] as String? ?? '',
+        genres: _decodeStringList(manhwaData['genres'] as String?),
+        rating: (manhwaData['rating'] as num?)?.toDouble() ?? 0.0,
+        status: manhwaData['status'] as String? ?? 'Unknown',
+        author: manhwaData['author'] as String? ?? 'Unknown',
+        artist: manhwaData['artist'] as String? ?? 'Unknown',
+        coverImageUrl: manhwaData['cover_image_url'] as String?,
+        chapters: chapters,
+      );
+
+      // Cache the result
+      _cache[id] = manhwa;
+      return manhwa;
+    } catch (e) {
+      print('Failed to get manhwa $id from SQLite: $e');
+      return legacy_data.getManhwaById(id);
+    }
+  }
+
+  // Get chapters for a manhwa
+  static Future<List<Chapter>> getChapters(String manhwaId) async {
+    final manhwa = await getManhwaById(manhwaId);
+    return manhwa?.chapters ?? [];
+  }
+
+  // Add manhwa to library
+  static Future<void> addToLibrary(Manhwa manhwa) async {
+    await _ensureInitialized();
+    
+    try {
+      await _saveManhwa(manhwa);
+    } catch (e) {
+      print('Failed to add manhwa to library: $e');
+      rethrow;
+    }
+  }
+
+  // Remove manhwa from library
+  static Future<void> removeFromLibrary(String manhwaId) async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      await db.delete('manhwas', where: 'id = ?', whereArgs: [manhwaId]);
+      _cache.remove(manhwaId);
+    } catch (e) {
+      print('Failed to remove manhwa from library: $e');
+      rethrow;
+    }
+  }
+
+  // Update chapter read status
+  static Future<void> updateChapterReadStatus(String manhwaId, int chapterNumber, bool isRead) async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      await db.update(
+        'chapters',
+        {'is_read': isRead ? 1 : 0},
+        where: 'manhwa_id = ? AND number = ?',
+        whereArgs: [manhwaId, chapterNumber],
+      );
+
+      // Update cache
+      if (_cache.containsKey(manhwaId)) {
+        final manhwa = _cache[manhwaId]!;
+        final updatedChapters = manhwa.chapters.map((chapter) {
+          if (chapter.number == chapterNumber) {
+            return chapter.copyWith(isRead: isRead);
+          }
+          return chapter;
+        }).toList();
+        
+        _cache[manhwaId] = manhwa.copyWith(chapters: updatedChapters);
+      }
+    } catch (e) {
+      print('Failed to update chapter read status: $e');
+    }
+  }
+
+  // Search manhwas
+  static Future<List<Manhwa>> searchManhwas(String query) async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      final results = await db.query(
+        'manhwas',
+        where: 'name LIKE ? OR description LIKE ? OR author LIKE ?',
+        whereArgs: ['%$query%', '%$query%', '%$query%'],
+        orderBy: 'name ASC',
+      );
+
+      final List<Manhwa> manhwas = [];
+      
+      for (final manhwaData in results) {
+        final manhwa = await getManhwaById(manhwaData['id'] as String);
+        if (manhwa != null) manhwas.add(manhwa);
+      }
+
+      return manhwas;
+    } catch (e) {
+      print('SQLite search failed: $e');
+      // Fallback to simple search in legacy data
+      return legacy_data.manhwaDatabase.values
+          .where((manhwa) => 
+              manhwa.name.toLowerCase().contains(query.toLowerCase()) ||
+              manhwa.description.toLowerCase().contains(query.toLowerCase()))
+          .toList();
+    }
+  }
+
+  // Get database statistics
+  static Future<Map<String, dynamic>> getStats() async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      
+      final manhwaCount = await db.rawQuery('SELECT COUNT(*) as count FROM manhwas');
+      final chapterCount = await db.rawQuery('SELECT COUNT(*) as count FROM chapters');
+      final readChapterCount = await db.rawQuery('SELECT COUNT(*) as count FROM chapters WHERE is_read = 1');
+      
+      return {
+        'total_manhwas': Sqflite.firstIntValue(manhwaCount) ?? 0,
+        'total_chapters': Sqflite.firstIntValue(chapterCount) ?? 0,
+        'read_chapters': Sqflite.firstIntValue(readChapterCount) ?? 0,
+      };
+    } catch (e) {
+      return {
+        'error': e.toString(),
+        'total_manhwas': legacy_data.manhwaDatabase.length,
+        'fallback': true,
+      };
+    }
+  }
+
+  // Refresh data from legacy source
+  static Future<void> refreshFromSource() async {
+    try {
+      // Clear existing data
+      await clearAllData();
+      
+      // Re-run migration
+      await _migrateAllData();
+      
+      _initialized = false; // Force re-initialization
+      await _ensureInitialized();
+    } catch (e) {
+      print('Failed to refresh from source: $e');
+      rethrow;
+    }
+  }
+
+  // Database maintenance
+  static Future<void> vacuum() async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      await db.execute('VACUUM');
+    } catch (e) {
+      print('Failed to vacuum database: $e');
+    }
+  }
+
+  // Clear all data
+  static Future<void> clearAllData() async {
+    await _ensureInitialized();
+    
+    try {
+      final db = await database;
+      await db.delete('manhwas');
+      _cache.clear();
+    } catch (e) {
+      print('Failed to clear all data: $e');
+      rethrow;
+    }
+  }
+
+  // Export data
+  static Future<Map<String, dynamic>> exportData() async {
+    await _ensureInitialized();
+    
+    try {
+      final manhwas = await getAllManhwa();
+      final export = <String, dynamic>{};
+      
+      for (final manhwa in manhwas) {
+        export[manhwa.id] = {
+          'name': manhwa.name,
+          'description': manhwa.description,
+          'genres': manhwa.genres,
+          'rating': manhwa.rating,
+          'status': manhwa.status,
+          'author': manhwa.author,
+          'artist': manhwa.artist,
+          'coverImageUrl': manhwa.coverImageUrl,
+          'chapters': manhwa.chapters.map((c) => {
+            'number': c.number,
+            'title': c.title,
+            'releaseDate': c.releaseDate.toIso8601String(),
+            'isRead': c.isRead,
+            'isDownloaded': c.isDownloaded,
+            'images': c.images,
+          }).toList(),
+        };
+      }
+      
+      return {
+        'export_date': DateTime.now().toIso8601String(),
+        'total_manhwas': manhwas.length,
+        'data': export,
+      };
+    } catch (e) {
+      print('Failed to export data: $e');
+      rethrow;
+    }
+  }
+
+  // Close database connection
+  static Future<void> close() async {
+    try {
+      if (_database != null) {
+        await _database!.close();
+        _database = null;
+      }
+      _cache.clear();
+      _initialized = false;
+      _factoryInitialized = false;
+    } catch (e) {
+      print('Failed to close database: $e');
+    }
+  }
+}

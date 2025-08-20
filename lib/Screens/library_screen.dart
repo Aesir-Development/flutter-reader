@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../Data/manhwa_data.dart';
+import '../services/manhwa_service.dart';
 import '../models/manwha.dart';
 import 'manhwa_screen.dart';
 
@@ -12,19 +12,101 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   List<Manhwa> manhwas = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    manhwas = manhwaDatabase.values.toList();
+    _loadManhwas();
+  }
+
+  Future<void> _loadManhwas() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final loadedManhwas = await ManhwaService.getAllManhwa();
+      setState(() {
+        manhwas = loadedManhwas;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading manhwas: $e');
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load library: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Expanded(child: _buildLibraryGrid()),
+        Expanded(child: _buildLibraryContent()),
       ],
+    );
+  }
+
+  Widget _buildLibraryContent() {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF6c5ce7)),
+      );
+    }
+
+    if (manhwas.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.library_books_outlined,
+              size: 64,
+              color: Colors.grey[600],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Your library is empty',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Add some manhwa to get started',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _loadManhwas,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6c5ce7),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.refresh, color: Colors.white),
+              label: const Text(
+                'Refresh Library',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadManhwas,
+      child: _buildLibraryGrid(),
     );
   }
 
@@ -48,8 +130,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _buildManhwaCard(Manhwa manhwa) {
     return GestureDetector(
-      onTap: () {
-        Navigator.push(
+      onTap: () async {
+        final result = await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => ManhwaScreen(
@@ -59,6 +141,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
           ),
         );
+        
+        // Refresh if needed
+        if (result == true) {
+          _loadManhwas();
+        }
       },
       child: Container(
         decoration: BoxDecoration(

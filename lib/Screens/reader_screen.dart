@@ -5,7 +5,7 @@ import '/models/chapter.dart';
 import 'dart:io' show Platform;
 import '../services/progress_service.dart';
 import 'dart:async';
-import '../Data/manhwa_data.dart';
+
 enum ImageLoadingState { waiting, loading, loaded, error }
 
 class _LoadedChapter {
