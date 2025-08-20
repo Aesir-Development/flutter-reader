@@ -1,4 +1,3 @@
-// screens/manhwa_screen.dart - MINIMAL CHANGES
 import 'package:flutter/material.dart';
 import '../Data/manhwa_data.dart';
 import '../models/manwha.dart';
