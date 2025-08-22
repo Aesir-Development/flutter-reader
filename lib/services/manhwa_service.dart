@@ -41,48 +41,82 @@ class ManhwaService {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // Increment version to add progress columns
       onCreate: (db, version) async {
         print('Creating database tables...');
-        
-        await db.execute('''
-          CREATE TABLE manhwas (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            genres TEXT,
-            rating REAL DEFAULT 0.0,
-            status TEXT,
-            author TEXT,
-            artist TEXT,
-            cover_image_url TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )
-        ''');
-
-        await db.execute('''
-          CREATE TABLE chapters (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            manhwa_id TEXT NOT NULL,
-            number INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            release_date TEXT NOT NULL,
-            is_read BOOLEAN DEFAULT FALSE,
-            is_downloaded BOOLEAN DEFAULT FALSE,
-            images TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
-            UNIQUE(manhwa_id, number)
-          )
-        ''');
-
-        await db.execute('CREATE INDEX idx_manhwa_chapters ON chapters(manhwa_id, number)');
-        await db.execute('CREATE INDEX idx_chapter_read_status ON chapters(manhwa_id, is_read)');
-        
+        await _createTables(db);
         print('Database tables created successfully!');
       },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          print('Upgrading database to add progress columns...');
+          await _addProgressColumns(db);
+          print('Database upgrade completed!');
+        }
+      },
     );
+  }
+
+  static Future<void> _createTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE manhwas (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        genres TEXT,
+        rating REAL DEFAULT 0.0,
+        status TEXT,
+        author TEXT,
+        artist TEXT,
+        cover_image_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        manhwa_id TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        release_date TEXT NOT NULL,
+        is_read BOOLEAN DEFAULT FALSE,
+        is_downloaded BOOLEAN DEFAULT FALSE,
+        images TEXT,
+        current_page INTEGER DEFAULT 0,
+        scroll_position REAL DEFAULT 0.0,
+        last_read_at TIMESTAMP,
+        reading_time_seconds INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
+        UNIQUE(manhwa_id, number)
+      )
+    ''');
+
+    await _createIndexes(db);
+  }
+
+  static Future<void> _addProgressColumns(Database db) async {
+    try {
+      await db.execute('ALTER TABLE chapters ADD COLUMN current_page INTEGER DEFAULT 0');
+      await db.execute('ALTER TABLE chapters ADD COLUMN scroll_position REAL DEFAULT 0.0');
+      await db.execute('ALTER TABLE chapters ADD COLUMN last_read_at TIMESTAMP');
+      await db.execute('ALTER TABLE chapters ADD COLUMN reading_time_seconds INTEGER DEFAULT 0');
+      await _createIndexes(db);
+    } catch (e) {
+      print('Progress columns may already exist: $e');
+    }
+  }
+
+  static Future<void> _createIndexes(Database db) async {
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_manhwa_chapters ON chapters(manhwa_id, number)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_chapter_read_status ON chapters(manhwa_id, is_read)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_last_read ON chapters(manhwa_id, last_read_at DESC)');
+    } catch (e) {
+      print('Indexes may already exist: $e');
+    }
   }
 
   static Future<void> _ensureInitialized() async {
@@ -142,9 +176,161 @@ class ManhwaService {
         'is_read': chapter.isRead ? 1 : 0,
         'is_downloaded': chapter.isDownloaded ? 1 : 0,
         'images': _encodeStringList(chapter.images),
+        'current_page': 0, // Initialize progress fields
+        'scroll_position': 0.0,
+        'last_read_at': null,
+        'reading_time_seconds': 0,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  // NEW: Save reading progress
+  static Future<void> saveProgress(
+    String manhwaId, 
+    int chapterNumber, 
+    int pageIndex, 
+    double scrollPosition,
+    {bool markAsRead = false}
+  ) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    final updateData = {
+      'current_page': pageIndex,
+      'scroll_position': scrollPosition,
+      'last_read_at': DateTime.now().toIso8601String(),
+    };
+    
+    if (markAsRead) {
+      updateData['is_read'] = 1;
+    }
+    
+    await db.update(
+      'chapters',
+      updateData,
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
+  }
+
+  // NEW: Get reading progress for a chapter
+  static Future<Map<String, dynamic>?> getProgress(String manhwaId, int chapterNumber) async {
+    await _ensureInitialized();
+
+    final db = await database;
+    final results = await db.query(
+      'chapters',
+      columns: ['current_page', 'scroll_position', 'last_read_at', 'is_read'],
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+      limit: 1,
+    );
+
+    if (results.isNotEmpty) {
+      final result = results.first;
+      return {
+        'pageIndex': result['current_page'] as int,
+        'scrollPosition': result['scroll_position'] as double,
+        'lastRead': result['last_read_at'] as String?,
+        'isRead': (result['is_read'] as int) == 1,
+      };
+    }
+    
+    return null;
+  }
+
+  // NEW: Mark chapter as completed
+  static Future<void> markChapterCompleted(String manhwaId, int chapterNumber) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.update(
+      'chapters',
+      {
+        'is_read': 1,
+        'last_read_at': DateTime.now().toIso8601String(),
+      },
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
+  }
+
+  // NEW: Get completed chapters
+  static Future<Set<int>> getCompletedChapters(String manhwaId) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    final results = await db.query(
+      'chapters',
+      columns: ['number'],
+      where: 'manhwa_id = ? AND is_read = 1',
+      whereArgs: [manhwaId],
+    );
+
+    return results.map((row) => row['number'] as int).toSet();
+  }
+
+  // NEW: Find best chapter to continue reading
+  static Future<int?> getContinueChapter(String manhwaId, List<int> allChapterNumbers) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    // Look for chapters with progress that aren't completed, ordered by most recent
+    final results = await db.query(
+      'chapters',
+      columns: ['number'],
+      where: 'manhwa_id = ? AND is_read = 0 AND (current_page > 0 OR scroll_position > 0.1)',
+      whereArgs: [manhwaId],
+      orderBy: 'last_read_at DESC',
+      limit: 1,
+    );
+
+    if (results.isNotEmpty) {
+      final chapterNumber = results.first['number'] as int;
+      if (allChapterNumbers.contains(chapterNumber)) {
+        return chapterNumber;
+      }
+    }
+    
+    // If no progress found, return first unread chapter
+    final completed = await getCompletedChapters(manhwaId);
+    for (final chapterNumber in allChapterNumbers) {
+      if (!completed.contains(chapterNumber)) {
+        return chapterNumber;
+      }
+    }
+    
+    return null; // All chapters completed
+  }
+
+  // NEW: Clear all progress for a manhwa
+  static Future<void> clearProgress(String manhwaId) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.update(
+      'chapters',
+      {
+        'is_read': 0,
+        'current_page': 0,
+        'scroll_position': 0.0,
+        'last_read_at': null,
+      },
+      where: 'manhwa_id = ?',
+      whereArgs: [manhwaId],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
   }
 
   // Get all manhwas from library
@@ -287,7 +473,10 @@ class ManhwaService {
     final db = await database;
     await db.update(
       'chapters',
-      {'is_read': isRead ? 1 : 0},
+      {
+        'is_read': isRead ? 1 : 0,
+        'last_read_at': isRead ? DateTime.now().toIso8601String() : null,
+      },
       where: 'manhwa_id = ? AND number = ?',
       whereArgs: [manhwaId, chapterNumber],
     );
