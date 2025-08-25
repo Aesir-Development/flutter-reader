@@ -7,6 +7,7 @@ import 'social_screen.dart';
 import 'browse_screen.dart';
 import 'more_screen.dart';
 import 'login_screen.dart';
+import 'dart:async';
 
 class MainShell extends StatefulWidget {
   const MainShell({Key? key}) : super(key: key);
@@ -18,6 +19,12 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _currentIndex = 2; // Default to Library tab
   bool _isOnline = true;
+  
+  // Connection check throttling
+  DateTime? _lastConnectionCheck;
+  static const Duration _connectionCheckInterval = Duration(minutes: 5); // Reduced frequency
+  
+  Timer? _connectionTimer;
 
   final List<Widget> _screens = const [
     SocialScreen(), 
@@ -39,12 +46,18 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    // Initial connection check (uses cache if available)
     _checkConnectionStatus();
+    
+    // Set up periodic connection checks (reduced frequency)
+    _startPeriodicConnectionCheck();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _connectionTimer?.cancel();
     ProgressService.dispose(); // Clean up sync timer
     super.dispose();
   }
@@ -52,42 +65,106 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _checkConnectionStatus();
-      _tryBackgroundSync();
+      // Only check connection if enough time has passed since last check
+      final now = DateTime.now();
+      if (_lastConnectionCheck == null || 
+          now.difference(_lastConnectionCheck!) > _connectionCheckInterval) {
+        _checkConnectionStatus();
+        _tryBackgroundSync();
+      } else {
+        print('Skipping connection check - too recent');
+      }
     }
   }
 
-  Future<void> _checkConnectionStatus() async {
-    final isOnline = await ApiService.checkConnection();
-    if (mounted && _isOnline != isOnline) {
-      setState(() {
-        _isOnline = isOnline;
-      });
-      
-      if (isOnline) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Back online! Syncing...'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
-        );
-        _tryBackgroundSync();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Offline mode - changes will sync when online'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 3),
-          ),
-        );
+  // OPTIMIZED: Reduced frequency connection checking
+  void _startPeriodicConnectionCheck() {
+    _connectionTimer?.cancel();
+    
+    // Check connection every 5 minutes instead of constantly
+    _connectionTimer = Timer.periodic(_connectionCheckInterval, (_) {
+      if (mounted && ApiService.isLoggedIn) {
+        _checkConnectionStatus();
       }
+    });
+  }
+
+  Future<void> _checkConnectionStatus() async {
+    if (!mounted || !ApiService.isLoggedIn) return;
+    
+    _lastConnectionCheck = DateTime.now();
+    
+    // Use cached connection status first
+    final cachedStatus = ApiService.cachedConnectionStatus;
+    if (cachedStatus != null) {
+      if (_isOnline != cachedStatus) {
+        setState(() => _isOnline = cachedStatus);
+        _showConnectionStatusMessage(cachedStatus);
+      }
+      return;
+    }
+    
+    // Only do actual network check if no cached status available
+    try {
+      final isOnline = await ApiService.checkConnection();
+      
+      if (mounted && _isOnline != isOnline) {
+        setState(() => _isOnline = isOnline);
+        _showConnectionStatusMessage(isOnline);
+        
+        if (isOnline) {
+          _tryBackgroundSync();
+        }
+      }
+    } catch (e) {
+      print('Connection check failed: $e');
+    }
+  }
+
+  void _showConnectionStatusMessage(bool isOnline) {
+    if (!mounted) return;
+    
+    if (isOnline) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.cloud_done, color: Colors.white, size: 16),
+              SizedBox(width: 8),
+              Text('Back online! Syncing progress...'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.cloud_off, color: Colors.white, size: 16),
+              SizedBox(width: 8),
+              Text('Offline - changes will sync when online'),
+            ],
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
   Future<void> _tryBackgroundSync() async {
     if (ApiService.isLoggedIn && _isOnline) {
-      await ProgressService.performFullSync();
+      // Non-blocking background sync
+      ProgressService.syncNow().then((success) {
+        if (success) {
+          print('Background sync completed successfully');
+        }
+      }).catchError((error) {
+        print('Background sync failed: $error');
+      });
     }
   }
 
@@ -121,12 +198,71 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
 
     if (confirmed == true) {
+      // Clear connection cache on logout
+      ApiService.clearConnectionCache();
       await ApiService.logout();
+      
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const ManhwaLoginScreen()),
       );
     }
+  }
+
+  // ENHANCED: Manual sync button in library header
+  Future<void> _triggerManualSync() async {
+    if (!ApiService.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please login to sync progress'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    
+    // Show loading
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            SizedBox(width: 12),
+            Text('Syncing progress...'),
+          ],
+        ),
+        duration: Duration(seconds: 5),
+        backgroundColor: Color(0xFF6c5ce7),
+      ),
+    );
+    
+    final success = await ProgressService.triggerManualSync();
+    
+    // Hide loading snackbar
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    
+    // Show result
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              success ? Icons.check_circle : Icons.error,
+              color: Colors.white,
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Text(success ? 'Sync completed!' : 'Sync failed - will retry later'),
+          ],
+        ),
+        backgroundColor: success ? Colors.green : Colors.red,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Widget _buildLibraryHeader(BuildContext context) {
@@ -136,43 +272,87 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Library',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Library',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
-              Row(
-                children: [
-                  Icon(
-                    _isOnline ? Icons.cloud_done : Icons.cloud_off,
-                    color: _isOnline ? Colors.green : Colors.orange,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    ApiService.isLoggedIn 
-                        ? (_isOnline ? 'Synced' : 'Offline')
-                        : 'Local only',
-                    style: TextStyle(
-                      color: _isOnline ? Colors.green : Colors.orange,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+                const SizedBox(height: 4),
+                FutureBuilder<Map<String, dynamic>>(
+                  future: ProgressService.getSyncStatus(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return _buildConnectionStatus();
+                    }
+                    
+                    final status = snapshot.data!;
+                    final isLoggedIn = status['isLoggedIn'] ?? false;
+                    final isSyncing = status['isSyncing'] ?? false;
+                    final hasPending = status['hasPendingSync'] ?? false;
+                    final connectionStatus = status['connectionStatus'];
+                    
+                    if (!isLoggedIn) {
+                      return const Row(
+                        children: [
+                          Icon(Icons.person_off, color: Colors.grey, size: 16),
+                          SizedBox(width: 4),
+                          Text('Local only', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        ],
+                      );
+                    }
+                    
+                    Color statusColor;
+                    IconData statusIcon;
+                    String statusText;
+                    
+                    if (isSyncing) {
+                      statusColor = Colors.blue;
+                      statusIcon = Icons.sync;
+                      statusText = 'Syncing...';
+                    } else if (connectionStatus == false) {
+                      statusColor = Colors.orange;
+                      statusIcon = Icons.cloud_off;
+                      statusText = 'Offline';
+                    } else if (hasPending) {
+                      statusColor = Colors.yellow;
+                      statusIcon = Icons.cloud_queue;
+                      statusText = 'Pending sync';
+                    } else {
+                      statusColor = Colors.green;
+                      statusIcon = Icons.cloud_done;
+                      statusText = 'Synced';
+                    }
+                    
+                    return Row(
+                      children: [
+                        isSyncing
+                            ? SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                                ),
+                              )
+                            : Icon(statusIcon, color: statusColor, size: 16),
+                        const SizedBox(width: 4),
+                        Text(
+                          statusText,
+                          style: TextStyle(color: statusColor, fontSize: 12),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
           Row(
             children: [
@@ -188,15 +368,52 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                 icon: const Icon(Icons.sort, color: Colors.white),
                 onPressed: _showSortOptions,
               ),
-              if (ApiService.isLoggedIn)
+              if (ApiService.isLoggedIn) ...[
+                // Manual sync button
+                IconButton(
+                  icon: const Icon(Icons.sync, color: Colors.white),
+                  onPressed: _triggerManualSync,
+                  tooltip: 'Manual Sync',
+                ),
                 IconButton(
                   icon: const Icon(Icons.logout, color: Colors.white),
                   onPressed: _logout,
                 ),
+              ],
             ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildConnectionStatus() {
+    if (!ApiService.isLoggedIn) {
+      return const Row(
+        children: [
+          Icon(Icons.person_off, color: Colors.grey, size: 16),
+          SizedBox(width: 4),
+          Text('Local only', style: TextStyle(color: Colors.grey, fontSize: 12)),
+        ],
+      );
+    }
+    
+    return Row(
+      children: [
+        Icon(
+          _isOnline ? Icons.cloud_done : Icons.cloud_off,
+          color: _isOnline ? Colors.green : Colors.orange,
+          size: 16,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          _isOnline ? 'Online' : 'Offline',
+          style: TextStyle(
+            color: _isOnline ? Colors.green : Colors.orange,
+            fontSize: 12,
+          ),
+        ),
+      ],
     );
   }
 
@@ -218,24 +435,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              if (ApiService.isLoggedIn)
-                Row(
-                  children: [
-                    Icon(
-                      _isOnline ? Icons.cloud_done : Icons.cloud_off,
-                      color: _isOnline ? Colors.green : Colors.orange,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _isOnline ? 'Online' : 'Offline',
-                      style: TextStyle(
-                        color: _isOnline ? Colors.green : Colors.orange,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
+              if (ApiService.isLoggedIn) _buildConnectionStatus(),
             ],
           ),
           IconButton(

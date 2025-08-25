@@ -4,26 +4,27 @@ import 'api_service.dart';
 import 'manhwa_service.dart';
 
 class ProgressService {
-  static Timer? _syncTimer;
+  static Timer? _periodicSyncTimer;
   static bool _isSyncing = false;
+  static bool _hasPendingSync = false;
   
-  // Initialize with auto-sync
+  // Initialize with reduced frequency periodic sync
   static Future<void> initialize() async {
     await ApiService.initialize();
     _startPeriodicSync();
   }
 
-  // Save progress with auto-sync
+  // Save progress locally only - NO immediate sync
   static Future<void> saveProgress(
     String manhwaId, 
     int chapterNumber, 
     int pageIndex, 
     double scrollPosition,
   ) async {
-    // Save locally first
+    // Save locally first (this is fast)
     await SQLiteProgressService.saveProgress(manhwaId, chapterNumber, pageIndex, scrollPosition);
     
-    // Queue for sync if logged in
+    // Queue for sync if logged in, but DON'T sync immediately
     if (ApiService.isLoggedIn) {
       final update = ProgressUpdate(
         manhwaId: manhwaId,
@@ -34,16 +35,15 @@ class ProgressService {
       );
       
       await ManhwaService.addPendingProgressUpdate(update);
+      _hasPendingSync = true;
       
-      // Try immediate sync if not already syncing
-      if (!_isSyncing) {
-        _trySyncNow();
-      }
+      // Don't sync immediately - let it be handled by chapter exit or periodic sync
+      print('Progress saved locally and queued for sync (${manhwaId}_${chapterNumber}_${pageIndex})');
     }
   }
 
-  // Mark completed with sync
-  static Future<void> markCompleted(String manhwaId, int chapterNumber) async {
+  // Mark completed and queue for sync (but don't sync immediately unless requested)
+  static Future<void> markCompleted(String manhwaId, int chapterNumber, {bool syncImmediately = false}) async {
     await SQLiteProgressService.markCompleted(manhwaId, chapterNumber);
     
     if (ApiService.isLoggedIn) {
@@ -56,7 +56,67 @@ class ProgressService {
       );
       
       await ManhwaService.addPendingProgressUpdate(update);
-      _trySyncNow();
+      _hasPendingSync = true;
+      
+      if (syncImmediately) {
+        await syncNow();
+      }
+    }
+  }
+
+  // NEW: Explicit sync method - call this when exiting chapter/reader
+  static Future<bool> syncNow({bool force = false}) async {
+    if (!ApiService.isLoggedIn) {
+      print('Not logged in, skipping sync');
+      return false;
+    }
+    
+    if (_isSyncing && !force) {
+      print('Sync already in progress');
+      return false;
+    }
+    
+    if (!_hasPendingSync && !force) {
+      print('No pending changes to sync');
+      return true;
+    }
+
+    print('🔄 Starting explicit sync...');
+    _isSyncing = true;
+    
+    try {
+      // Check connection first (uses cache)
+      final isOnline = await ApiService.checkConnection();
+      if (!isOnline) {
+        print('❌ No connection available for sync');
+        return false;
+      }
+      
+      final pendingUpdates = await ManhwaService.getPendingProgressUpdates();
+      if (pendingUpdates.isEmpty) {
+        print('✅ No pending updates to sync');
+        _hasPendingSync = false;
+        return true;
+      }
+      
+      print('📤 Syncing ${pendingUpdates.length} progress updates...');
+      final result = await ApiService.pushProgress(pendingUpdates);
+      
+      if (result.success) {
+        await ManhwaService.clearPendingProgressUpdates();
+        _hasPendingSync = false;
+        print('✅ Sync completed successfully');
+        return true;
+      } else {
+        print('❌ Sync failed: ${result.error}');
+        return false;
+      }
+      
+    } catch (e) {
+      print('❌ Sync failed with exception: $e');
+      return false;
+    } finally {
+      _isSyncing = false;
     }
   }
 
@@ -76,75 +136,73 @@ class ProgressService {
   static Future<void> clearProgress(String manhwaId) =>
       SQLiteProgressService.clearProgress(manhwaId);
 
-  // Sync management
+  // Reduced frequency periodic sync - only as fallback
   static void _startPeriodicSync() {
-    _syncTimer?.cancel();
-    _syncTimer = Timer.periodic(const Duration(minutes: 5), (_) {
-      if (ApiService.isLoggedIn && !_isSyncing) {
-        _trySyncNow();
+    _periodicSyncTimer?.cancel();
+    
+    // Reduced frequency: every 30 minutes instead of 5
+    _periodicSyncTimer = Timer.periodic(const Duration(minutes: 30), (_) {
+      if (ApiService.isLoggedIn && !_isSyncing && _hasPendingSync) {
+        print('⏰ Periodic sync triggered');
+        syncNow();
       }
     });
   }
 
-  static Future<void> _trySyncNow() async {
-    if (_isSyncing || !ApiService.isLoggedIn) return;
-    
-    _isSyncing = true;
-    
-    try {
-      final canConnect = await ApiService.checkConnection();
-      if (!canConnect) return;
-      
-      final pendingUpdates = await ManhwaService.getPendingProgressUpdates();
-      if (pendingUpdates.isNotEmpty) {
-        final result = await ApiService.pushProgress(pendingUpdates);
-        if (result.success) {
-          await ManhwaService.clearPendingProgressUpdates();
-          print('Synced ${pendingUpdates.length} progress updates');
-        }
-      }
-    } catch (e) {
-      print('Sync failed: $e');
-    } finally {
-      _isSyncing = false;
-    }
-  }
-
-  // Full sync (called after login)
+  // Full sync (called after login or when explicitly requested)
   static Future<bool> performFullSync() async {
-    if (!ApiService.isLoggedIn || _isSyncing) return false;
+    if (!ApiService.isLoggedIn) {
+      print('Not logged in for full sync');
+      return false;
+    }
     
+    if (_isSyncing) {
+      print('Sync already in progress');
+      return false;
+    }
+
     _isSyncing = true;
     
     try {
-      print('Starting full sync...');
+      print('🔄 Starting full sync...');
+      
+      // Check connection with longer timeout for full sync
+      final isOnline = await ApiService.forceCheckConnection();
+      if (!isOnline) {
+        print('❌ No connection available for full sync');
+        return false;
+      }
       
       // Pull data from server
+      print('📥 Pulling data from server...');
       final pullResult = await ApiService.pullSync();
       if (!pullResult.success) {
-        print('Failed to pull sync data: ${pullResult.error}');
+        print('❌ Failed to pull sync data: ${pullResult.error}');
         return false;
       }
       
       final syncData = pullResult.data!;
       
       // Merge progress data
+      print('🔄 Merging progress data...');
       await _mergeProgressData(syncData.progress);
       
       // Push any pending updates
       final pendingUpdates = await ManhwaService.getPendingProgressUpdates();
       if (pendingUpdates.isNotEmpty) {
+        print('📤 Pushing ${pendingUpdates.length} pending updates...');
         final pushResult = await ApiService.pushProgress(pendingUpdates);
         if (pushResult.success) {
           await ManhwaService.clearPendingProgressUpdates();
+          _hasPendingSync = false;
         }
       }
       
-      print('Full sync completed successfully');
+      print('✅ Full sync completed successfully');
       return true;
       
     } catch (e) {
-      print('Full sync failed: $e');
+      print('❌ Full sync failed: $e');
       return false;
     } finally {
       _isSyncing = false;
@@ -182,8 +240,33 @@ class ProgressService {
     }
   }
 
+  // Get sync status for UI
+  static bool get isSyncing => _isSyncing;
+  static bool get hasPendingSync => _hasPendingSync;
+  
+  static Future<Map<String, dynamic>> getSyncStatus() async {
+    final pendingCount = (await ManhwaService.getPendingProgressUpdates()).length;
+    final lastSync = await ManhwaService.getLastSyncTime();
+    final connectionStatus = ApiService.cachedConnectionStatus;
+    
+    return {
+      'isLoggedIn': ApiService.isLoggedIn,
+      'isSyncing': _isSyncing,
+      'pendingUpdates': pendingCount,
+      'lastSync': lastSync?.toIso8601String(),
+      'connectionStatus': connectionStatus, // true/false/null
+      'hasPendingSync': _hasPendingSync,
+    };
+  }
+
+  // Manual sync trigger (for UI buttons)
+  static Future<bool> triggerManualSync() async {
+    print('📱 Manual sync triggered by user');
+    return await syncNow(force: true);
+  }
+
   // Clean up
   static void dispose() {
-    _syncTimer?.cancel();
+    _periodicSyncTimer?.cancel();
   }
 }

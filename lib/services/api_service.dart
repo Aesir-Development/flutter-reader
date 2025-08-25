@@ -8,6 +8,11 @@ class ApiService {
   
   static String? _authToken;
   static User? _currentUser;
+  
+  // Connection caching
+  static bool? _lastConnectionStatus;
+  static DateTime? _lastConnectionCheck;
+  static const Duration _connectionCacheTimeout = Duration(minutes: 2);
 
   // Initialize from database
   static Future<void> initialize() async {
@@ -50,12 +55,17 @@ class ApiService {
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
         await _saveAuthData(data['token'], User.fromJson(data['user']));
+        
+        // Clear connection cache since we just made a successful request
+        _updateConnectionCache(true);
+        
         return AuthResult.success(_currentUser!);
       } else {
         final error = jsonDecode(response.body)['error'] ?? 'Registration failed';
         return AuthResult.error(error);
       }
     } catch (e) {
+      _updateConnectionCache(false);
       return AuthResult.error('Network error: ${e.toString()}');
     }
   }
@@ -74,12 +84,17 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         await _saveAuthData(data['token'], User.fromJson(data['user']));
+        
+        // Clear connection cache since we just made a successful request
+        _updateConnectionCache(true);
+        
         return AuthResult.success(_currentUser!);
       } else {
         final error = jsonDecode(response.body)['error'] ?? 'Login failed';
         return AuthResult.error(error);
       }
     } catch (e) {
+      _updateConnectionCache(false);
       return AuthResult.error('Network error: ${e.toString()}');
     }
   }
@@ -88,6 +103,10 @@ class ApiService {
     await ManhwaService.clearAuthData();
     _authToken = null;
     _currentUser = null;
+    
+    // Clear connection cache
+    _lastConnectionStatus = null;
+    _lastConnectionCheck = null;
   }
 
   static Future<void> _saveAuthData(String token, User user) async {
@@ -105,7 +124,7 @@ class ApiService {
       final response = await http.get(
         Uri.parse('$_baseUrl/api/sync/pull'),
         headers: _headers,
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -114,11 +133,15 @@ class ApiService {
         // Save last sync time in database
         await ManhwaService.setLastSyncTime(DateTime.now());
         
+        // Update connection cache
+        _updateConnectionCache(true);
+        
         return SyncResult.success(syncData);
       } else {
         return SyncResult.error('Failed to sync: ${response.statusCode}');
       }
     } catch (e) {
+      _updateConnectionCache(false);
       return SyncResult.error('Network error: ${e.toString()}');
     }
   }
@@ -128,18 +151,25 @@ class ApiService {
     if (updates.isEmpty) return SyncResult.success(null);
 
     try {
+      print('Pushing ${updates.length} progress updates to server...');
+      
       final response = await http.post(
         Uri.parse('$_baseUrl/api/sync/progress'),
         headers: _headers,
         body: jsonEncode(updates.map((u) => u.toJson()).toList()),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
+        _updateConnectionCache(true);
+        print('Successfully pushed progress updates');
         return SyncResult.success(null);
       } else {
+        print('Failed to push progress: ${response.statusCode}');
         return SyncResult.error('Failed to push progress: ${response.statusCode}');
       }
     } catch (e) {
+      _updateConnectionCache(false);
+      print('Failed to push progress: $e');
       return SyncResult.error('Network error: ${e.toString()}');
     }
   }
@@ -159,14 +189,16 @@ class ApiService {
           'add': add,
           'remove': remove,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
+        _updateConnectionCache(true);
         return SyncResult.success(null);
       } else {
         return SyncResult.error('Failed to sync library: ${response.statusCode}');
       }
     } catch (e) {
+      _updateConnectionCache(false);
       return SyncResult.error('Network error: ${e.toString()}');
     }
   }
@@ -179,33 +211,69 @@ class ApiService {
       final response = await http.get(
         Uri.parse('$_baseUrl/api/stats'),
         headers: _headers,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
+        _updateConnectionCache(true);
         return jsonDecode(response.body);
       }
     } catch (e) {
+      _updateConnectionCache(false);
       print('Failed to get user stats: $e');
     }
     
     return null;
   }
 
+  // OPTIMIZED CONNECTION CHECK WITH CACHING
   static Future<bool> checkConnection() async {
+    // Return cached result if it's still valid
+    if (_lastConnectionStatus != null && 
+        _lastConnectionCheck != null && 
+        DateTime.now().difference(_lastConnectionCheck!) < _connectionCacheTimeout) {
+      return _lastConnectionStatus!;
+    }
+
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/health'),
-        headers: _headers,
+        headers: {'Accept': 'application/json'},
       ).timeout(const Duration(seconds: 5));
       
-      return response.statusCode == 200;
+      final isOnline = response.statusCode == 200;
+      _updateConnectionCache(isOnline);
+      return isOnline;
+      
     } catch (e) {
+      _updateConnectionCache(false);
       return false;
     }
   }
+
+  // Get cached connection status without network call
+  static bool? get cachedConnectionStatus => _lastConnectionStatus;
+
+  // Force refresh connection status
+  static Future<bool> forceCheckConnection() async {
+    _lastConnectionStatus = null;
+    _lastConnectionCheck = null;
+    return await checkConnection();
+  }
+
+  // Update connection cache
+  static void _updateConnectionCache(bool isOnline) {
+    _lastConnectionStatus = isOnline;
+    _lastConnectionCheck = DateTime.now();
+  }
+
+  // Clear connection cache (call when you want to force a fresh check)
+  static void clearConnectionCache() {
+    _lastConnectionStatus = null;
+    _lastConnectionCheck = null;
+  }
 }
 
-// Data models
+// Data models (unchanged)
 class User {
   final int id;
   final String email;
@@ -307,7 +375,7 @@ class ProgressUpdate {
   }
 }
 
-// Result classes
+// Result classes (unchanged)
 class AuthResult {
   final bool success;
   final User? user;

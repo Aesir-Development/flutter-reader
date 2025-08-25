@@ -116,11 +116,15 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
       });
     }
   }
-
+Future<void> _syncOnExit() async {
+  await _saveCurrentProgress();
+  ProgressService.syncNow(); // Non-blocking
+}
   @override
   void dispose() {
     _progressSaveTimer?.cancel();
     _saveCurrentProgress();
+    _syncOnExit();
     _scrollController.dispose();
     _appBarAnimationController.dispose();
     _preloadedImages.clear();
@@ -835,7 +839,12 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   @override
   Widget build(BuildContext context) {
     final currentChapter = widget.allChapters[_currentVisibleChapterIndex];
-    return Scaffold(
+      return WillPopScope(
+    onWillPop: () async {
+      await _syncOnExit();
+      return true;
+    },
+    child: Scaffold(
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -978,6 +987,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
           ],
         ),
       ),
+    ),
     );
   }
 
