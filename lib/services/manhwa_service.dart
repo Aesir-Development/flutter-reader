@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 import '../models/manwha.dart';
 import '../models/chapter.dart';
+import 'api_service.dart';
 
 class ManhwaService {
   static Database? _database;
@@ -94,6 +96,24 @@ class ManhwaService {
       )
     ''');
 
+    // Add app settings table for auth and sync
+    await db.execute('''
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      )
+    ''');
+
+    // Add pending sync table
+    await db.execute('''
+      CREATE TABLE pending_sync (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
     await _createIndexes(db);
   }
 
@@ -103,6 +123,24 @@ class ManhwaService {
       await db.execute('ALTER TABLE chapters ADD COLUMN scroll_position REAL DEFAULT 0.0');
       await db.execute('ALTER TABLE chapters ADD COLUMN last_read_at TIMESTAMP');
       await db.execute('ALTER TABLE chapters ADD COLUMN reading_time_seconds INTEGER DEFAULT 0');
+      
+      // Create new tables if they don't exist
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS app_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        )
+      ''');
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS pending_sync (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL,
+          data TEXT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      ''');
+
       await _createIndexes(db);
     } catch (e) {
       print('Progress columns may already exist: $e');
@@ -331,6 +369,163 @@ class ManhwaService {
 
     // Invalidate cache for this manhwa
     _cache.remove(manhwaId);
+  }
+
+  // Auth data storage methods
+  static Future<void> saveAuthData(String token, String userData) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    await db.insert(
+      'app_settings',
+      {'key': 'auth_token', 'value': token},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    
+    await db.insert(
+      'app_settings',
+      {'key': 'user_data', 'value': userData},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<Map<String, String>?> getAuthData() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    final tokenResult = await db.query(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: ['auth_token'],
+      limit: 1,
+    );
+    
+    final userResult = await db.query(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: ['user_data'],
+      limit: 1,
+    );
+    
+    if (tokenResult.isNotEmpty && userResult.isNotEmpty) {
+      return {
+        'token': tokenResult.first['value'] as String,
+        'user_data': userResult.first['value'] as String,
+      };
+    }
+    
+    return null;
+  }
+
+  static Future<void> clearAuthData() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.delete(
+      'app_settings',
+      where: 'key IN (?, ?)',
+      whereArgs: ['auth_token', 'user_data'],
+    );
+  }
+
+  // Sync state management
+  static Future<void> setLastSyncTime(DateTime time) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.insert(
+      'app_settings',
+      {'key': 'last_sync', 'value': time.toIso8601String()},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<DateTime?> getLastSyncTime() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    final result = await db.query(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: ['last_sync'],
+      limit: 1,
+    );
+    
+    if (result.isNotEmpty) {
+      return DateTime.tryParse(result.first['value'] as String);
+    }
+    
+    return null;
+  }
+
+  // Pending sync operations
+  static Future<void> addPendingProgressUpdate(ProgressUpdate update) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    // Remove existing update for same chapter
+    final existingUpdates = await db.query(
+      'pending_sync',
+      where: 'type = ?',
+      whereArgs: ['progress'],
+    );
+
+    for (final row in existingUpdates) {
+      final data = jsonDecode(row['data'] as String);
+      if (data['manhwaId'] == update.manhwaId && data['chapterNumber'] == update.chapterNumber) {
+        await db.delete(
+          'pending_sync',
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+      }
+    }
+    
+    // Add new update
+    await db.insert(
+      'pending_sync',
+      {
+        'type': 'progress',
+        'data': jsonEncode(update.toJson()),
+      },
+    );
+  }
+
+  static Future<List<ProgressUpdate>> getPendingProgressUpdates() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    final results = await db.query(
+      'pending_sync',
+      where: 'type = ?',
+      whereArgs: ['progress'],
+    );
+    
+    return results.map((row) {
+      final data = jsonDecode(row['data'] as String);
+      return ProgressUpdate(
+        manhwaId: data['manhwaId'],
+        chapterNumber: data['chapterNumber'],
+        currentPage: data['currentPage'],
+        scrollPosition: data['scrollPosition'].toDouble(),
+        isRead: data['isRead'],
+      );
+    }).toList();
+  }
+
+  static Future<void> clearPendingProgressUpdates() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.delete(
+      'pending_sync',
+      where: 'type = ?',
+      whereArgs: ['progress'],
+    );
   }
 
   // Get all manhwas from library

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutterreader/Screens/library_screen.dart';
+import '../services/api_service.dart';
+import '../services/progress_service.dart';
+import 'main_shell.dart';
+
 class ManhwaLoginScreen extends StatefulWidget {
   const ManhwaLoginScreen({Key? key}) : super(key: key);
 
@@ -14,13 +17,35 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
   
   bool _isPasswordVisible = false;
   bool _isLoading = false;
+  bool _isRegisterMode = false;
+  bool _isOfflineMode = false;
 
-  // Hardcoded login credentials
-  final Map<String, String> _credentials = {
-    'admin@manhwa.com': 'admin123',
-    'user@manhwa.com': 'user123',
-    'demo@manhwa.com': 'demo123',
-  };
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingLogin();
+  }
+
+  Future<void> _checkExistingLogin() async {
+    await ApiService.initialize();
+    if (ApiService.isLoggedIn) {
+      // Try to sync if online, but don't block
+      _performBackgroundSync();
+      _navigateToMainShell();
+    }
+  }
+
+  Future<void> _performBackgroundSync() async {
+    try {
+      final canConnect = await ApiService.checkConnection();
+      if (canConnect) {
+        await ProgressService.performFullSync();
+      }
+    } catch (e) {
+      print('Background sync failed: $e');
+      // Continue anyway - offline mode
+    }
+  }
 
   @override
   void dispose() {
@@ -29,42 +54,67 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
     super.dispose();
   }
 
-  Future<void> _handleLogin() async {
+  Future<void> _handleAuth() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
     
-    // Simulate network delay
-    await Future.delayed(const Duration(milliseconds: 800));
-    
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     
-    if (_credentials.containsKey(email) && _credentials[email] == password) {
-      _showSuccess();
-    } else {
-      _showError('Invalid email or password');
+    try {
+      AuthResult result;
+      
+      if (_isRegisterMode) {
+        result = await ApiService.register(email, password);
+      } else {
+        result = await ApiService.login(email, password);
+      }
+      
+      if (result.success) {
+        _showSuccess(_isRegisterMode ? 'Registration' : 'Login');
+        
+        // Perform initial sync
+        final syncSuccess = await ProgressService.performFullSync();
+        if (!syncSuccess) {
+          _showWarning('Logged in but sync failed. Working in offline mode.');
+        }
+        
+        _navigateToMainShell();
+      } else {
+        _showError(result.error ?? 'Authentication failed');
+      }
+    } catch (e) {
+      _showError('Network error. Please check your connection.');
     }
     
     setState(() => _isLoading = false);
   }
 
-void _showSuccess() {
-  // Show success SnackBar
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text('Login successful! Welcome to Manhwa Reader'),
-      backgroundColor: Colors.green,
-    ),
-  );
-  // Navigate to LibraryScreen after a short delay
-  Future.delayed(const Duration(milliseconds: 500), () {
+  Future<void> _continueOffline() async {
+    setState(() => _isOfflineMode = true);
+    _showInfo('Working in offline mode. Login to sync across devices.');
+    
+    // Small delay for user to see the message
+    await Future.delayed(const Duration(milliseconds: 1500));
+    _navigateToMainShell();
+  }
+
+  void _navigateToMainShell() {
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const LibraryScreen()),
+      MaterialPageRoute(builder: (context) => const MainShell()),
     );
-  });
-}
+  }
+
+  void _showSuccess(String action) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$action successful! Welcome to Manhwa Reader'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
 
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -75,34 +125,52 @@ void _showSuccess() {
     );
   }
 
+  void _showWarning(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.orange,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showInfo(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFF6c5ce7),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   void _showCredentials() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Demo Credentials'),
+        backgroundColor: const Color(0xFF2a2a2a),
+        title: const Text('Demo Credentials', style: TextStyle(color: Colors.white)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Use any of these credentials to login:'),
+            const Text('Use any of these credentials to login:', style: TextStyle(color: Colors.grey)),
             const SizedBox(height: 16),
-            ..._credentials.entries.map((entry) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Email: ${entry.key}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text('Password: ${entry.value}'),
-                  const SizedBox(height: 4),
-                ],
-              ),
-            )),
+            const Text('Email: admin@manhwa.com', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const Text('Password: admin123', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 8),
+            const Text('Email: user@manhwa.com', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const Text('Password: user123', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 8),
+            const Text('Email: demo@manhwa.com', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const Text('Password: demo123', style: TextStyle(color: Colors.grey)),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: const Text('Close', style: TextStyle(color: Color(0xFF6c5ce7))),
           ),
         ],
       ),
@@ -128,11 +196,19 @@ void _showSuccess() {
               children: [
                 _buildHeader(),
                 const SizedBox(height: 40),
-                _buildLoginForm(),
-                const SizedBox(height: 24),
-                _buildLoginButton(),
-                const SizedBox(height: 16),
-                _buildCredentialsButton(),
+                if (!_isOfflineMode) ...[
+                  _buildAuthForm(),
+                  const SizedBox(height: 24),
+                  _buildAuthButton(),
+                  const SizedBox(height: 16),
+                  _buildSwitchModeButton(),
+                  const SizedBox(height: 16),
+                  _buildCredentialsButton(),
+                  const SizedBox(height: 24),
+                  _buildOfflineOption(),
+                ] else ...[
+                  _buildOfflineMessage(),
+                ],
               ],
             ),
           ),
@@ -167,17 +243,22 @@ void _showSuccess() {
         ),
         const SizedBox(height: 8),
         Text(
-          'Login to continue reading',
+          _isOfflineMode 
+              ? 'Offline Mode' 
+              : _isRegisterMode 
+                  ? 'Create your account'
+                  : 'Login to sync across devices',
           style: TextStyle(
             fontSize: 16,
             color: Colors.grey[400],
           ),
+          textAlign: TextAlign.center,
         ),
       ],
     );
   }
 
-  Widget _buildLoginForm() {
+  Widget _buildAuthForm() {
     return Form(
       key: _formKey,
       child: Column(
@@ -246,8 +327,8 @@ void _showSuccess() {
               if (value == null || value.isEmpty) {
                 return 'Please enter your password';
               }
-              if (value.length < 3) {
-                return 'Password must be at least 3 characters';
+              if (value.length < 6) {
+                return 'Password must be at least 6 characters';
               }
               return null;
             },
@@ -257,12 +338,12 @@ void _showSuccess() {
     );
   }
 
-  Widget _buildLoginButton() {
+  Widget _buildAuthButton() {
     return SizedBox(
       width: double.infinity,
       height: 50,
       child: ElevatedButton(
-        onPressed: _isLoading ? null : _handleLogin,
+        onPressed: _isLoading ? null : _handleAuth,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF6c5ce7),
           shape: RoundedRectangleBorder(
@@ -278,14 +359,32 @@ void _showSuccess() {
                   strokeWidth: 2,
                 ),
               )
-            : const Text(
-                'Login',
-                style: TextStyle(
+            : Text(
+                _isRegisterMode ? 'Register' : 'Login',
+                style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
               ),
+      ),
+    );
+  }
+
+  Widget _buildSwitchModeButton() {
+    return TextButton(
+      onPressed: () {
+        setState(() {
+          _isRegisterMode = !_isRegisterMode;
+        });
+      },
+      child: Text(
+        _isRegisterMode 
+            ? 'Already have an account? Login'
+            : 'Don\'t have an account? Register',
+        style: const TextStyle(
+          color: Color(0xFF6c5ce7),
+        ),
       ),
     );
   }
@@ -299,6 +398,108 @@ void _showSuccess() {
           color: Color(0xFF6c5ce7),
           decoration: TextDecoration.underline,
         ),
+      ),
+    );
+  }
+
+  Widget _buildOfflineOption() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2a2a2a),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.cloud_off,
+            color: Colors.grey[400],
+            size: 32,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Use Offline Mode',
+            style: TextStyle(
+              color: Colors.grey[300],
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Continue without account. Your data will be stored locally.',
+            style: TextStyle(
+              color: Colors.grey[500],
+              fontSize: 12,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _continueOffline,
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.grey[600]!),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                'Continue Offline',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineMessage() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2a2a2a),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF6c5ce7).withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.offline_bolt,
+            color: Color(0xFF6c5ce7),
+            size: 48,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Offline Mode Active',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your reading progress will be saved locally. Create an account later to sync across devices.',
+            style: TextStyle(
+              color: Colors.grey[400],
+              fontSize: 14,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          const CircularProgressIndicator(
+            color: Color(0xFF6c5ce7),
+            strokeWidth: 3,
+          ),
+        ],
       ),
     );
   }

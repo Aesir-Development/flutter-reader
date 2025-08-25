@@ -1,20 +1,50 @@
 import 'package:flutter/material.dart';
-import 'package:flutterreader/Screens/main_shell.dart';
+import 'package:flutterreader/Screens/login_screen.dart';
 import 'services/manhwa_service.dart';
+import 'services/progress_service.dart';
+import 'services/api_service.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await verifyMigrationSuccess();
-  // Test the database
-  try {
-    print('Initializing manhwa database...');
-    final stats = await ManhwaService.getStats();
-    print('Database initialized successfully!');
-    print('Stats: $stats');
-  } catch (e) {
-    print('Database initialization failed: $e');
-  }
+  
+  // Initialize services
+  await initializeApp();
   
   runApp(MyApp());
+}
+
+Future<void> initializeApp() async {
+  try {
+    print('🚀 Initializing Manhwa Reader...');
+    
+    // 1. Initialize database
+    print('📚 Initializing manhwa database...');
+    final stats = await ManhwaService.getStats();
+    print('✅ Database initialized! Stats: $stats');
+    
+    // 2. Initialize progress service (which handles sync)
+    print('🔄 Initializing progress service...');
+    await ProgressService.initialize();
+    print('✅ Progress service initialized!');
+    
+    // 3. Check if user is logged in and try background sync
+    if (ApiService.isLoggedIn) {
+      print('👤 User is logged in, attempting background sync...');
+      final canConnect = await ApiService.checkConnection();
+      if (canConnect) {
+        final syncSuccess = await ProgressService.performFullSync();
+        print(syncSuccess ? '✅ Background sync successful!' : '⚠️ Background sync failed');
+      } else {
+        print('📱 No connection, working offline');
+      }
+    }
+    
+    print('🎉 App initialization complete!');
+    
+  } catch (e) {
+    print('❌ App initialization failed: $e');
+    // Continue anyway - app should work offline
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -26,12 +56,14 @@ class MyApp extends StatelessWidget {
       title: 'Manhwa Reader',
       theme: ThemeData(
         primarySwatch: Colors.deepPurple,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const MainShell(),
+      home: const ManhwaLoginScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
+
 Future<void> initializeManhwaDatabase() async {
   try {
     // This will automatically:
@@ -54,6 +86,7 @@ Future<void> initializeManhwaDatabase() async {
     // Handle error - maybe show a dialog to user
   }
 }
+
 // Add this function to test your migration thoroughly
 Future<void> verifyMigrationSuccess() async {
   print('=== Verifying Migration Success ===');
