@@ -29,8 +29,8 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
   String _sortType = 'Latest First';
   
   // Progress tracking
-  Set<int> _completedChapters = {};
-  int? _continueChapter;
+  Set<double> _completedChapters = {};
+  double? _continueChapter;
 
   @override
   void initState() {
@@ -700,7 +700,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     );
   }
 
-  Future<void> _navigateToReader(int chapterNumber) async {
+  Future<void> _navigateToReader(double chapterNumber) async {
     if (manhwa == null) return;
     
     final selectedChapter = manhwa!.chapters.firstWhere(

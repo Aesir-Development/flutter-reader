@@ -81,21 +81,22 @@ class SQLiteProgressService {
     // Create chapters table with progress columns
     await db.execute('''
       CREATE TABLE IF NOT EXISTS chapters (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        manhwa_id TEXT NOT NULL,
-        number INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        release_date TEXT NOT NULL,
-        is_read BOOLEAN DEFAULT FALSE,
-        is_downloaded BOOLEAN DEFAULT FALSE,
-        images TEXT,
-        current_page INTEGER DEFAULT 0,
-        scroll_position REAL DEFAULT 0.0,
-        last_read_at TIMESTAMP,
-        reading_time_seconds INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
-        UNIQUE(manhwa_id, number)
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  manhwa_id TEXT NOT NULL,
+  number REAL NOT NULL,
+  title TEXT NOT NULL,
+  release_date TEXT NOT NULL,
+  is_read BOOLEAN DEFAULT FALSE,
+  is_downloaded BOOLEAN DEFAULT FALSE,
+  images TEXT,
+  current_page INTEGER DEFAULT 0,
+  scroll_position REAL DEFAULT 0.0,
+  last_read_at TIMESTAMP,
+  reading_time_seconds INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
+  UNIQUE(manhwa_id, number)
+);
       )
     ''');
 
@@ -136,7 +137,7 @@ class SQLiteProgressService {
   // Save reading position for a chapter
   static Future<void> saveProgress(
     String manhwaId, 
-    int chapterNumber, 
+    double chapterNumber, 
     int pageIndex, 
     double scrollPosition,
     {bool markAsRead = false}
@@ -170,7 +171,7 @@ class SQLiteProgressService {
   }
 
   // Get reading position for a chapter
-  static Future<Map<String, dynamic>?> getProgress(String manhwaId, int chapterNumber) async {
+  static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
     // Check cache first
     final cacheKey = '${manhwaId}_$chapterNumber';
     if (_cache.containsKey(manhwaId) && _cache[manhwaId]!.containsKey(cacheKey)) {
@@ -189,8 +190,8 @@ class SQLiteProgressService {
     if (results.isNotEmpty) {
       final result = results.first;
       final progress = {
-        'pageIndex': result['current_page'] as int,
-        'scrollPosition': result['scroll_position'] as double,
+        'pageIndex': (result['current_page'] as num).toInt(),
+        'scrollPosition': (result['scroll_position'] as num).toDouble(),
         'lastRead': result['last_read_at'] as String?,
         'isRead': (result['is_read'] as int) == 1,
       };
@@ -204,7 +205,7 @@ class SQLiteProgressService {
   }
 
   // Mark chapter as completed
-  static Future<void> markCompleted(String manhwaId, int chapterNumber) async {
+  static Future<void> markCompleted(String manhwaId, double chapterNumber) async {
     final db = await database;
     
     await db.update(
@@ -219,10 +220,10 @@ class SQLiteProgressService {
 
     // Invalidate cache for this manhwa
     _cache.remove(manhwaId);
-  }
+  } 
 
   // Check if chapter is completed
-  static Future<bool> isCompleted(String manhwaId, int chapterNumber) async {
+  static Future<bool> isCompleted(String manhwaId, double chapterNumber) async {
     final db = await database;
     final results = await db.query(
       'chapters',
@@ -236,7 +237,7 @@ class SQLiteProgressService {
   }
 
   // Get list of completed chapters
-  static Future<Set<int>> getCompletedChapters(String manhwaId) async {
+  static Future<Set<double>> getCompletedChapters(String manhwaId) async {
     final db = await database;
     final results = await db.query(
       'chapters',
@@ -245,11 +246,11 @@ class SQLiteProgressService {
       whereArgs: [manhwaId],
     );
 
-    return results.map((row) => row['number'] as int).toSet();
+    return results.map((row) => (row['number'] as num).toDouble()).toSet();
   }
 
   // Find best chapter to continue from
-  static Future<int?> getContinueChapter(String manhwaId, List<int> allChapterNumbers) async {
+  static Future<double?> getContinueChapter(String manhwaId, List<double> allChapterNumbers) async {
     final db = await database;
     
     // Look for chapters with progress that aren't completed, ordered by most recent
@@ -263,7 +264,7 @@ class SQLiteProgressService {
     );
 
     if (results.isNotEmpty) {
-      final chapterNumber = results.first['number'] as int;
+      final chapterNumber = (results.first['number'] as num).toDouble();
       if (allChapterNumbers.contains(chapterNumber)) {
         return chapterNumber;
       }
@@ -331,7 +332,7 @@ class SQLiteProgressService {
   }
 
   // Cache management
-  static void _updateCache(String manhwaId, int chapterNumber, Map<String, dynamic> progress) {
+  static void _updateCache(String manhwaId, double chapterNumber, Map<String, dynamic> progress) {
     if (!_cache.containsKey(manhwaId)) {
       _cache[manhwaId] = {};
     }
@@ -350,15 +351,15 @@ class SQLiteProgressService {
     );
 
     final progress = <String, dynamic>{};
-    final completed = <int>[];
+    final completed = <double>[];
 
-    for (final row in results) {
-      final chapterNumber = row['number'] as int;
-      
-      if ((row['is_read'] as int) == 1) {
-        completed.add(chapterNumber);
-      }
-      
+for (final row in results) {
+  final chapterNumber = (row['number'] as num).toDouble();
+  
+  if ((row['is_read'] as int) == 1) {
+    completed.add(chapterNumber);
+  }
+     
       if ((row['current_page'] as int) > 0 || (row['scroll_position'] as double) > 0.0) {
         final cacheKey = '${manhwaId}_$chapterNumber';
         progress[cacheKey] = {

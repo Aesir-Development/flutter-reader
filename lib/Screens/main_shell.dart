@@ -43,12 +43,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    
-    // Initial connection check (uses cache if available)
+void initState() {
+  super.initState();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
     _checkConnectionStatus();
+    // Initial connection check (uses cache if available)
+  });
     
     // Set up periodic connection checks (reduced frequency)
     _startPeriodicConnectionCheck();

@@ -317,7 +317,7 @@ class ManhwaService {
   }
 
   // NEW: Find best chapter to continue reading
-  static Future<int?> getContinueChapter(String manhwaId, List<int> allChapterNumbers) async {
+  static Future<num?> getContinueChapter(String manhwaId, List<int> allChapterNumbers) async {
     await _ensureInitialized();
     
     final db = await database;
@@ -333,7 +333,8 @@ class ManhwaService {
     );
 
     if (results.isNotEmpty) {
-      final chapterNumber = results.first['number'] as int;
+      final row = results.first;
+      final chapterNumber = (row['number'] as num).toDouble();
       if (allChapterNumbers.contains(chapterNumber)) {
         return chapterNumber;
       }
@@ -552,7 +553,7 @@ class ManhwaService {
       );
 
       final chapters = chapterResults.map((row) => Chapter(
-        number: row['number'] as int,
+        number: (row['number'] as num).toDouble(),
         title: row['title'] as String,
         releaseDate: DateTime.parse(row['release_date'] as String),
         isRead: (row['is_read'] as int) == 1,
@@ -615,7 +616,7 @@ class ManhwaService {
     );
 
     final chapters = chapterResults.map((row) => Chapter(
-      number: row['number'] as int,
+      number: row['number'] as double,
       title: row['title'] as String,
       releaseDate: DateTime.parse(row['release_date'] as String),
       isRead: (row['is_read'] as int) == 1,

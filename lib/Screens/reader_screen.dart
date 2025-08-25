@@ -222,7 +222,7 @@ Future<void> _syncOnExit() async {
     
     final completedChapters = await ProgressService.getCompletedChapters(_manhwaId!);
     setState(() {
-      for (int chapterNum in completedChapters) {
+      for (double chapterNum in completedChapters) {
         final chapterIndex = widget.allChapters.indexWhere((c) => c.number == chapterNum);
         if (chapterIndex != -1) {
           _completedChapters[chapterIndex] = true;
@@ -245,7 +245,7 @@ Future<void> _syncOnExit() async {
     );
   }
 
-  Future<void> _markChapterComplete(int chapterNumber) async {
+  Future<void> _markChapterComplete(double chapterNumber) async {
     if (_manhwaId == null) return;
     
     // Use the progress service that automatically handles sync

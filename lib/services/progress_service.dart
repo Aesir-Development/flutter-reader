@@ -17,7 +17,7 @@ class ProgressService {
   // Save progress locally only - NO immediate sync
   static Future<void> saveProgress(
     String manhwaId, 
-    int chapterNumber, 
+    double chapterNumber, 
     int pageIndex, 
     double scrollPosition,
   ) async {
@@ -43,7 +43,7 @@ class ProgressService {
   }
 
   // Mark completed and queue for sync (but don't sync immediately unless requested)
-  static Future<void> markCompleted(String manhwaId, int chapterNumber, {bool syncImmediately = false}) async {
+  static Future<void> markCompleted(String manhwaId, double chapterNumber, {bool syncImmediately = false}) async {
     await SQLiteProgressService.markCompleted(manhwaId, chapterNumber);
     
     if (ApiService.isLoggedIn) {
@@ -121,16 +121,16 @@ class ProgressService {
   }
 
   // Delegate other methods to SQLite service
-  static Future<Map<String, dynamic>?> getProgress(String manhwaId, int chapterNumber) =>
+  static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) =>
       SQLiteProgressService.getProgress(manhwaId, chapterNumber);
 
-  static Future<bool> isCompleted(String manhwaId, int chapterNumber) =>
+  static Future<bool> isCompleted(String manhwaId, double chapterNumber) =>
       SQLiteProgressService.isCompleted(manhwaId, chapterNumber);
 
-  static Future<Set<int>> getCompletedChapters(String manhwaId) =>
+  static Future<Set<double>> getCompletedChapters(String manhwaId) =>
       SQLiteProgressService.getCompletedChapters(manhwaId);
 
-  static Future<int?> getContinueChapter(String manhwaId, List<int> allChapterNumbers) =>
+  static Future<double?> getContinueChapter(String manhwaId, List<double> allChapterNumbers) =>
       SQLiteProgressService.getContinueChapter(manhwaId, allChapterNumbers);
 
   static Future<void> clearProgress(String manhwaId) =>

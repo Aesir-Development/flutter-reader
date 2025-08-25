@@ -319,7 +319,7 @@ class SyncData {
 
 class RemoteProgress {
   final String manhwaId;
-  final int chapterNumber;
+  final double chapterNumber;
   final int currentPage;
   final double scrollPosition;
   final bool isRead;
@@ -336,22 +336,22 @@ class RemoteProgress {
     required this.updatedAt,
   });
 
-  factory RemoteProgress.fromJson(Map<String, dynamic> json) {
-    return RemoteProgress(
-      manhwaId: json['manhwaId'],
-      chapterNumber: json['chapterNumber'],
-      currentPage: json['currentPage'],
-      scrollPosition: json['scrollPosition'].toDouble(),
-      isRead: json['isRead'],
-      lastReadAt: DateTime.parse(json['lastReadAt']),
-      updatedAt: DateTime.parse(json['updatedAt']),
-    );
-  }
+factory RemoteProgress.fromJson(Map<String, dynamic> json) {
+  return RemoteProgress(
+    manhwaId: json['manhwaId'],
+    chapterNumber: (json['chapterNumber'] as num).toDouble(),
+    currentPage: (json['currentPage'] as num).toInt(),
+    scrollPosition: (json['scrollPosition'] as num).toDouble(),
+    isRead: json['isRead'] is bool ? json['isRead'] : (json['isRead'] == 1),
+    lastReadAt: DateTime.parse(json['lastReadAt']),
+    updatedAt: DateTime.parse(json['updatedAt']),
+  );
+}
 }
 
 class ProgressUpdate {
   final String manhwaId;
-  final int chapterNumber;
+  final double chapterNumber;
   final int currentPage;
   final double scrollPosition;
   final bool isRead;
