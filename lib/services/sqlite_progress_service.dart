@@ -1,9 +1,10 @@
-// Updated SQLiteProgressService - Integrated with main database
+
 import 'dart:async';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
+import '../Data/manhwa_data.dart'; 
 
 class SQLiteProgressService {
   static Database? _database;
@@ -36,7 +37,7 @@ class SQLiteProgressService {
 
     return await openDatabase(
       path,
-      version: 2, // Increment version to trigger onUpgrade
+      version: 3, // Increment version to trigger onUpgrade
       onCreate: (db, version) async {
         // Create tables if they don't exist (for new installations)
         await _createTables(db);
@@ -45,6 +46,15 @@ class SQLiteProgressService {
         if (oldVersion < 2) {
           // Add progress columns to existing chapters table
           await _addProgressColumns(db);
+        }
+        if (oldVersion < 3) {
+          // Add app_settings table
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT
+            )
+          ''');
         }
       },
     );
@@ -86,6 +96,14 @@ class SQLiteProgressService {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
         UNIQUE(manhwa_id, number)
+      )
+    ''');
+
+    // Create app_settings table for storing auth tokens and app preferences
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
       )
     ''');
 
@@ -411,6 +429,75 @@ class SQLiteProgressService {
     }
   }
 
+  // ===== APP SETTINGS METHODS =====
+  
+  // Save a setting (auth tokens, preferences, etc.)
+  static Future<void> saveSetting(String key, String value) async {
+    final db = await database;
+    await db.rawInsert(
+      'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
+      [key, value]
+    );
+    print('Setting saved: $key');
+  }
+
+  // Get a setting by key
+  static Future<String?> getSetting(String key) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT value FROM app_settings WHERE key = ?',
+      [key]
+    );
+    
+    if (result.isNotEmpty) {
+      final value = result.first['value'] as String?;
+      print('Setting retrieved: $key = $value');
+      return value;
+    }
+    
+    print('Setting not found: $key');
+    return null;
+  }
+
+  // Delete a setting by key
+  static Future<void> deleteSetting(String key) async {
+    final db = await database;
+    final deletedRows = await db.delete(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: [key],
+    );
+    print('Setting deleted: $key ($deletedRows rows affected)');
+  }
+
+  // Get all settings
+  static Future<Map<String, String>> getAllSettings() async {
+    final db = await database;
+    final results = await db.query('app_settings');
+    
+    final settings = <String, String>{};
+    for (final row in results) {
+      settings[row['key'] as String] = row['value'] as String;
+    }
+    
+    return settings;
+  }
+
+  // Check if a setting exists
+  static Future<bool> hasSetting(String key) async {
+    final value = await getSetting(key);
+    return value != null;
+  }
+
+  // Clear all settings
+  static Future<void> clearAllSettings() async {
+    final db = await database;
+    await db.delete('app_settings');
+    print('All settings cleared');
+  }
+
+  // ===== UTILITY METHODS =====
+
   // Close database
   static Future<void> close() async {
     if (_database != null) {
@@ -432,5 +519,101 @@ class SQLiteProgressService {
       'SELECT COUNT(*) as count FROM chapters WHERE current_page > 0 OR scroll_position > 0.0 OR is_read = 1'
     );
     return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  // Add all manhwa from manhwa_data.dart to database
+  static Future<void> addDummyData() async {
+    try {
+      final db = await database;
+      
+      for (final entry in manhwaDatabase.entries) {
+        final manhwa = entry.value;
+        
+        // Add manhwa
+        await db.insert('manhwas', {
+          'id': manhwa.id,
+          'name': manhwa.name,
+          'description': manhwa.description ?? '',
+          'genres': manhwa.genres.join(','),
+          'rating': manhwa.rating,
+          'status': manhwa.status,
+          'author': manhwa.author ?? '',
+          'artist': manhwa.artist ?? '',
+          'cover_image_url': manhwa.coverImageUrl ?? '',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        
+        // Add chapters
+        for (final chapter in manhwa.chapters) {
+          await db.insert('chapters', {
+            'manhwa_id': manhwa.id,
+            'number': chapter.number,
+            'title': chapter.title,
+            'release_date': chapter.releaseDate.toIso8601String(),
+            'images': chapter.images.join('|'),
+            'is_read': 0, // Use 0 instead of false
+            'is_downloaded': 0, // Use 0 instead of false
+            'current_page': 0,
+            'scroll_position': 0.0,
+            'reading_time_seconds': 0,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+      
+      print('Added ${manhwaDatabase.length} manhwas to database');
+      
+    } catch (e) {
+      print('Error adding dummy data: $e');
+      rethrow;
+    }
+  }
+
+  // Force recreate database (use once for fixing schema issues)
+  static Future<void> forceRecreateDatabase() async {
+    try {
+      // Close existing connection
+      if (_database != null) {
+        await _database!.close();
+        _database = null;
+      }
+      
+      // Delete database file
+      final dbPath = await getDatabasesPath();
+      final path = join(dbPath, 'manhwa_database.db');
+      final file = File(path);
+      
+      if (await file.exists()) {
+        await file.delete();
+        print('Database file deleted successfully');
+      }
+      
+      // Clear cache
+      _cache.clear();
+      
+      // Reinitialize database (will create new one with proper schema)
+      _database = await _initDatabase();
+      print('Database recreated successfully');
+      
+    } catch (e) {
+      print('Error recreating database: $e');
+      rethrow;
+    }
+  }
+
+  // Get database info for debugging
+  static Future<Map<String, dynamic>> getDatabaseInfo() async {
+    final db = await database;
+    
+    final manhwaCount = await db.rawQuery('SELECT COUNT(*) as count FROM manhwas');
+    final chapterCount = await db.rawQuery('SELECT COUNT(*) as count FROM chapters');
+    final settingsCount = await db.rawQuery('SELECT COUNT(*) as count FROM app_settings');
+    final progressCount = await getProgressCount();
+    
+    return {
+      'manhwas': Sqflite.firstIntValue(manhwaCount) ?? 0,
+      'chapters': Sqflite.firstIntValue(chapterCount) ?? 0,
+      'settings': Sqflite.firstIntValue(settingsCount) ?? 0,
+      'progress_records': progressCount,
+      'database_version': 3,
+    };
   }
 }
