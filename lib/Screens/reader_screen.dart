@@ -1183,36 +1183,44 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
               _buildEnhancedProgressBar(),
               Positioned(
                 bottom: 30,
-                right: 16,
+                left: 16,
                 child: AnimatedBuilder(
                   animation: _appBarAnimationController,
                   builder: (context, _) => Column(
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (_currentVisibleChapterIndex > 0 &&
+                      // Move buttons to bottom left by aligning to start
+                      Align(
+                      alignment: Alignment.bottomLeft,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                        if (_currentVisibleChapterIndex > 0 &&
                           !_loadedChapters.any((ch) => ch.chapterIndex == _currentVisibleChapterIndex - 1))
-                        Transform.translate(
+                          Transform.translate(
                           offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
                           child: FloatingActionButton(
                             mini: true,
                             heroTag: "load_previous",
                             onPressed: _isLoadingPrevious
-                                ? null
-                                : () {
-                                    _loadPreviousChapter();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('Loading Chapter $_currentVisibleChapterIndex...'), duration: const Duration(seconds: 1)),
-                                    );
-                                  },
+                              ? null
+                              : () {
+                                _loadPreviousChapter();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Loading Chapter $_currentVisibleChapterIndex...'), duration: const Duration(seconds: 1)),
+                                );
+                              },
                             backgroundColor: _isLoadingPrevious ? Colors.grey : const Color(0xFF6c5ce7).withOpacity(0.9),
                             child: _isLoadingPrevious
-                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
-                                : const Icon(Icons.keyboard_arrow_up, color: Colors.white),
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
+                              : const Icon(Icons.keyboard_arrow_up, color: Colors.white),
                           ),
-                        ),
-                      if (_showScrollToTop) const SizedBox(height: 8),
-                      if (_showScrollToTop)
-                        Transform.translate(
+                          ),
+                        if (_showScrollToTop) const SizedBox(height: 8),
+                        if (_showScrollToTop)
+                          Transform.translate(
                           offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
                           child: FloatingActionButton(
                             mini: true,
@@ -1221,17 +1229,20 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
                             backgroundColor: Colors.black.withOpacity(0.7),
                             child: const Icon(Icons.vertical_align_top, color: Colors.white),
                           ),
-                        ),
-                      if (_showScrollToTop) const SizedBox(height: 8),
-                      Transform.translate(
-                        offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
-                        child: FloatingActionButton(
+                          ),
+                        if (_showScrollToTop) const SizedBox(height: 8),
+                        Transform.translate(
+                          offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
+                          child: FloatingActionButton(
                           mini: true,
                           heroTag: "fullscreen",
                           onPressed: _toggleFullscreen,
                           backgroundColor: _isFullscreen ? const Color(0xFF6c5ce7) : Colors.black.withOpacity(0.7),
                           child: Icon(_isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen, color: Colors.white),
+                          ),
                         ),
+                        ],
+                      ),
                       ),
                     ],
                   ),
