@@ -1,12 +1,12 @@
 name: flutterreader
 description: A manhwa reader app with progress tracking
 
-publish_to: 'none'
+publish_to: "none"
 
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -21,7 +21,6 @@ dependencies:
   path: ^1.8.3
   flutter_js: ^0.8.5
 
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -29,3 +28,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - plugins/
+    - plugins/libs/

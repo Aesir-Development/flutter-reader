@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/plugin_service.dart';
 
 class MoreScreen extends StatefulWidget {
   const MoreScreen({Key? key}) : super(key: key);
@@ -6,10 +7,19 @@ class MoreScreen extends StatefulWidget {
   @override
   State<MoreScreen> createState() => _MoreScreenState();
 }
+
 class _MoreScreenState extends State<MoreScreen> {
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
+      children: [
+        ElevatedButton(
+          onPressed: () {
+            PluginService.testPlugin();
+          },
+          child: Text('Run Test'),
+        ),
+      ],
     );
   }
 }
