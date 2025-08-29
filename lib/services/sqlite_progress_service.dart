@@ -171,38 +171,39 @@ class SQLiteProgressService {
   }
 
   // Get reading position for a chapter
-  static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
-    // Check cache first
-    final cacheKey = '${manhwaId}_$chapterNumber';
-    if (_cache.containsKey(manhwaId) && _cache[manhwaId]!.containsKey(cacheKey)) {
-      return _cache[manhwaId]![cacheKey];
-    }
+static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
+  // Clear cache to ensure fresh data
+  _cache.remove(manhwaId);
+  print('Cleared cache for manhwaId=$manhwaId');
 
-    final db = await database;
-    final results = await db.query(
-      'chapters',
-      columns: ['current_page', 'scroll_position', 'last_read_at', 'is_read'],
-      where: 'manhwa_id = ? AND number = ?',
-      whereArgs: [manhwaId, chapterNumber],
-      limit: 1,
-    );
+  final db = await database;
+  final results = await db.query(
+    'chapters',
+    columns: ['current_page', 'scroll_position', 'last_read_at', 'is_read'],
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+    limit: 1,
+  );
 
-    if (results.isNotEmpty) {
-      final result = results.first;
-      final progress = {
-        'pageIndex': (result['current_page'] as num).toInt(),
-        'scrollPosition': (result['scroll_position'] as num).toDouble(),
-        'lastRead': result['last_read_at'] as String?,
-        'isRead': (result['is_read'] as int) == 1,
-      };
-      
-      // Cache the result
-      _updateCache(manhwaId, chapterNumber, progress);
-      return progress;
-    }
+  if (results.isNotEmpty) {
+    final result = results.first;
+    final progress = {
+      'pageIndex': (result['current_page'] as num).toInt(),
+      'scrollPosition': (result['scroll_position'] as num).toDouble(),
+      'lastRead': result['last_read_at'] as String?,
+      'isRead': (result['is_read'] as int) == 1,
+    };
     
-    return null;
+    print('SQLiteProgressService.getProgress: Retrieved for manhwaId=$manhwaId, chapter=$chapterNumber: $progress');
+    
+    // Cache the result
+    _updateCache(manhwaId, chapterNumber, progress);
+    return progress;
   }
+  
+  print('SQLiteProgressService.getProgress: No progress found for manhwaId=$manhwaId, chapter=$chapterNumber');
+  return null;
+}
 
   // Mark chapter as completed
   static Future<void> markCompleted(String manhwaId, double chapterNumber) async {

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/progress_service.dart';
+import '../services/manhwa_service.dart';
+import '../services/sqlite_progress_service.dart';
 import 'main_shell.dart';
 
 class ManhwaLoginScreen extends StatefulWidget {
@@ -54,15 +56,205 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
     super.dispose();
   }
 
+  // Check if database has existing data
+  Future<bool> _hasExistingData() async {
+    return await hasExistingData();
+  }
+
+  // Static method to wipe all database data (accessible from other screens)
+  static Future<void> wipeDatabase(BuildContext context) async {
+    try {
+      // Clear all manhwa data
+      await ManhwaService.clearAllData();
+      
+      // Clear all progress data
+      await SQLiteProgressService.clearAllSettings();
+      
+      // Clear any remaining progress records
+      final db = await SQLiteProgressService.database;
+      await db.update(
+        'chapters',
+        {
+          'is_read': 0,
+          'current_page': 0,
+          'scroll_position': 0.0,
+          'last_read_at': null,
+          'reading_time_seconds': 0,
+        },
+      );
+      
+      print('Database wiped successfully');
+      
+    } catch (e) {
+      print('Error wiping database: $e');
+      rethrow;
+    }
+  }
+  
+  // Static method to check if database has existing data
+  static Future<bool> hasExistingData() async {
+    try {
+      final stats = await ManhwaService.getStats();
+      final dbInfo = await SQLiteProgressService.getDatabaseInfo();
+      
+      final hasManhwas = (stats['total_manhwas'] ?? 0) > 0;
+      final hasProgress = (dbInfo['progress_records'] ?? 0) > 0;
+      
+      return hasManhwas || hasProgress;
+    } catch (e) {
+      print('Error checking existing data: $e');
+      return false;
+    }
+  }
+
+  // Instance method for login flow
+  Future<void> _wipeDatabase() async {
+    try {
+      setState(() => _isLoading = true);
+      
+      await wipeDatabase(context);
+      _showSuccess('Database cleared successfully!');
+      
+    } catch (e) {
+      _showError('Failed to clear database: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // Show wipe confirmation dialog
+  Future<bool> _showWipeConfirmationDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2a2a2a),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.warning, color: Colors.orange, size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Text('Existing Data Found', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your device already contains manhwa library data and reading progress.',
+              style: TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '⚠️ Warning',
+                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Logging in will sync your account data. You can either:',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '• WIPE: Clear local data and start fresh with your account',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '• MERGE: Keep local data and merge with your account (may cause conflicts)',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'What would you like to do?',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null), // Cancel
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false), // Keep/Merge
+            child: const Text(
+              'Keep & Merge',
+              style: TextStyle(color: Color(0xFF6c5ce7)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true), // Wipe
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text(
+              'Wipe & Start Fresh',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    
+    return result ?? false; // Default to false (cancel/keep) if dialog is dismissed
+  }
+
   Future<void> _handleAuth() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
     
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-    
     try {
+      // Check for existing data before login
+      final hasData = await _hasExistingData();
+      
+      if (hasData) {
+        // Hide loading while showing dialog
+        setState(() => _isLoading = false);
+        
+        final shouldWipe = await _showWipeConfirmationDialog();
+        
+        // If user cancelled, return early
+        if (shouldWipe == null) {
+          return;
+        }
+        
+        // Show loading again
+        setState(() => _isLoading = true);
+        
+        // Wipe database if requested
+        if (shouldWipe == true) {
+          await _wipeDatabase();
+        }
+      }
+      
+      // Proceed with authentication
+      final email = _emailController.text.trim().toLowerCase();
+      final password = _passwordController.text;
+      
       AuthResult result;
       
       if (_isRegisterMode) {

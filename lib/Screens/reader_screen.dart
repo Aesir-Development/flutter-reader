@@ -14,6 +14,7 @@ class _LoadedChapter {
   final Chapter chapter;
   final List<String> images;
   final Map<String, ImageLoadingState> imageLoadingStates;
+  final Map<String, double> imageHeights; 
   final bool isFullyLoaded;
   final double chapterHeight;
 
@@ -22,12 +23,14 @@ class _LoadedChapter {
     required this.chapter,
     required this.images,
     required this.imageLoadingStates,
+    this.imageHeights = const {},
     this.isFullyLoaded = false,
     this.chapterHeight = 0.0,
   });
 
   _LoadedChapter copyWith({
     Map<String, ImageLoadingState>? imageLoadingStates,
+    Map<String, double>? imageHeights,
     bool? isFullyLoaded,
     double? chapterHeight,
   }) {
@@ -36,6 +39,7 @@ class _LoadedChapter {
       chapter: chapter,
       images: images,
       imageLoadingStates: imageLoadingStates ?? this.imageLoadingStates,
+      imageHeights: imageHeights ?? this.imageHeights,
       isFullyLoaded: isFullyLoaded ?? this.isFullyLoaded,
       chapterHeight: chapterHeight ?? this.chapterHeight,
     );
@@ -63,7 +67,6 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMixin {
-  // === CORE STATE VARIABLES ===
   late int startingChapterIndex;
   final ScrollController _scrollController = ScrollController();
   late AnimationController _appBarAnimationController;
@@ -71,13 +74,11 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   bool _showScrollToTop = false;
   bool _isFullscreen = false;
   
-  // === READER SETTINGS ===
   double _scrollProgress = 0.0;
   double _brightness = 1.0;
   double _imageScale = 1.0;
   bool _vibrationFeedback = true;
   
-  // === CHAPTER LOADING STATE ===
   List<_LoadedChapter> _loadedChapters = [];
   bool _isLoadingNext = false;
   bool _isLoadingPrevious = false;
@@ -85,7 +86,6 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   final Map<String, ImageProvider> _preloadedImages = {};
   bool _hasInitializedImages = false;
   
-  // === PROGRESS TRACKING ===
   int _currentPageIndex = 0;
   String? _manhwaId;
   Timer? _progressSaveTimer;
@@ -93,7 +93,6 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   bool _isResumingToInitialPosition = false;
   final Map<int, bool> _completedChapters = {};
   
-  // === CHAPTER LAYOUT ===
   final Map<int, GlobalKey> _chapterDividerKeys = {};
   final Map<int, double> _chapterStartOffsets = {};
 
@@ -116,10 +115,12 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
       });
     }
   }
-Future<void> _syncOnExit() async {
-  await _saveCurrentProgress();
-  ProgressService.syncNow(); // Non-blocking
-}
+
+  Future<void> _syncOnExit() async {
+    await _saveCurrentProgress();
+    ProgressService.syncNow();
+  }
+
   @override
   void dispose() {
     _progressSaveTimer?.cancel();
@@ -130,8 +131,6 @@ Future<void> _syncOnExit() async {
     _preloadedImages.clear();
     super.dispose();
   }
-
-  // === INITIALIZATION METHODS ===
 
   void _initializeReader() {
     print('=== INIT STATE START ===');
@@ -155,7 +154,6 @@ Future<void> _syncOnExit() async {
     _scrollController.addListener(_scrollListener);
     _currentPageIndex = widget.initialPageIndex;
     
-    // Initialize chapter divider keys
     for (int i = 0; i < widget.allChapters.length; i++) {
       _chapterDividerKeys[i] = GlobalKey();
     }
@@ -169,53 +167,102 @@ Future<void> _syncOnExit() async {
     print('=== SCROLL TO POSITION ===');
     print('Initial page index: ${widget.initialPageIndex}');
     print('Initial scroll position: ${widget.initialScrollPosition}');
-    
+
     if (widget.initialPageIndex > 0 || widget.initialScrollPosition > 0) {
       _isResumingToInitialPosition = true;
-      
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Future.delayed(const Duration(milliseconds: 1000), () {
-          if (mounted && _scrollController.hasClients) {
-            double targetOffset = 0;
-            
-            if (widget.initialScrollPosition > 0) {
-              targetOffset = widget.initialScrollPosition;
-              print('Using saved scroll position: $targetOffset');
-            } else {
-              targetOffset = widget.initialPageIndex * 800.0;
-              print('Calculated from page index: $targetOffset');
-            }
-            
-            final finalOffset = targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent);
-            print('Final scroll position: $finalOffset');
-            
-            _scrollController.animateTo(
-              finalOffset,
-              duration: const Duration(milliseconds: 800),
-              curve: Curves.easeInOut,
-            ).then((_) {
-              Future.delayed(const Duration(milliseconds: 1000), () {
-                _isResumingToInitialPosition = false;
-                print('Resume position complete - completion tracking enabled');
-              });
-            });
-            
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Resumed from page ${widget.initialPageIndex + 1}'),
-                duration: const Duration(seconds: 2),
-                backgroundColor: const Color(0xFF6c5ce7),
-              ),
+
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final currentChapterData = _loadedChapters.firstWhere(
+          (c) => c.chapterIndex == startingChapterIndex,
+          orElse: () => _loadedChapters.first,
+        );
+
+        if (!currentChapterData.isFullyLoaded || currentChapterData.imageHeights.length < currentChapterData.images.length) {
+          print('Waiting for chapter ${currentChapterData.chapter.number} to load all image heights...');
+          await Future.doWhile(() async {
+            await Future.delayed(const Duration(milliseconds: 200));
+            final updatedChapter = _loadedChapters.firstWhere(
+              (c) => c.chapterIndex == startingChapterIndex,
+              orElse: () => _loadedChapters.first,
             );
+            print('Checking chapter ${updatedChapter.chapter.number}: isFullyLoaded=${updatedChapter.isFullyLoaded}, imageHeights=${updatedChapter.imageHeights.length}/${updatedChapter.images.length}');
+            return !updatedChapter.isFullyLoaded || updatedChapter.imageHeights.length < updatedChapter.images.length;
+          });
+        }
+
+        if (!mounted || !_scrollController.hasClients) {
+          print('Aborting scroll: widget not mounted or no scroll controller');
+          return;
+        }
+
+        final updatedChapterData = _loadedChapters.firstWhere(
+          (c) => c.chapterIndex == startingChapterIndex,
+          orElse: () => _loadedChapters.first,
+        );
+
+        print('Image heights for chapter ${updatedChapterData.chapter.number}: ${updatedChapterData.imageHeights}');
+        print('Total chapter height: ${updatedChapterData.chapterHeight}');
+
+        _calculateChapterOffsets();
+        final chapterStartOffset = _chapterStartOffsets[startingChapterIndex] ?? 0;
+        double targetOffset = 0;
+
+        if (widget.initialScrollPosition > 0) {
+          targetOffset = widget.initialScrollPosition;
+          if (targetOffset > updatedChapterData.chapterHeight) {
+            print('Warning: initialScrollPosition ($targetOffset) exceeds chapter height (${updatedChapterData.chapterHeight}), adjusting to max');
+            targetOffset = updatedChapterData.chapterHeight;
           }
+          print('Using saved scroll position: $targetOffset');
+        } else if (widget.initialPageIndex > 0) {
+          final images = updatedChapterData.images;
+          final targetPage = widget.initialPageIndex.clamp(0, images.length - 1);
+          double cumulativeHeight = 0;
+          for (int i = 0; i < targetPage; i++) {
+            final imageUrl = images[i];
+            final imageHeight = updatedChapterData.imageHeights[imageUrl] ?? 800.0;
+            if (imageHeight == 800.0) {
+              print('Warning: Using default height 800.0 for image $imageUrl');
+            }
+            cumulativeHeight += imageHeight;
+            print('Page ${i + 1} height: $imageHeight, Cumulative: $cumulativeHeight');
+          }
+          targetOffset = chapterStartOffset + cumulativeHeight;
+          print('Calculated offset from page index $targetPage: $targetOffset');
+        }
+
+        final maxScrollExtent = _scrollController.position.maxScrollExtent;
+        final finalOffset = targetOffset.clamp(0.0, maxScrollExtent);
+        print('Final scroll position: $finalOffset (max: $maxScrollExtent)');
+
+        _scrollController.animateTo(
+          finalOffset,
+          duration: const Duration(milliseconds: 800),
+          curve: Curves.easeInOut,
+        ).then((_) {
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              _isResumingToInitialPosition = false;
+              print('Resume position complete - completion tracking enabled');
+            }
+          });
         });
+
+        if (targetOffset > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Resumed from page ${widget.initialPageIndex + 1}'),
+              duration: const Duration(seconds: 2),
+              backgroundColor: const Color(0xFF6c5ce7),
+            ),
+          );
+        }
+
+        _hasScrolledToInitialPosition = true;
       });
-      _hasScrolledToInitialPosition = true;
     }
     print('========================');
   }
-
-  // === PROGRESS AND SYNC METHODS ===
 
   Future<void> _loadProgress() async {
     if (_manhwaId == null) return;
@@ -232,23 +279,37 @@ Future<void> _syncOnExit() async {
   }
 
   Future<void> _saveCurrentProgress() async {
-    if (_manhwaId == null) return;
-    
+    if (_manhwaId == null) {
+      print('Skipping progress save: manhwaId is null');
+      return;
+    }
+
+    if (!mounted || !_scrollController.hasClients) {
+      print('Skipping progress save: widget not mounted or no scroll controller');
+      return;
+    }
+
     final currentChapter = widget.allChapters[_currentVisibleChapterIndex];
-    
-    // Use the progress service that automatically handles sync
+    final offset = _scrollController.offset;
+
+    if (offset <= 0) {
+      print('Warning: Attempted to save progress with offset=0.0 for manhwaId=$_manhwaId, chapter=${currentChapter.number}, page=$_currentPageIndex');
+      return;
+    }
+
+    print('Saving progress: manhwaId=$_manhwaId, chapter=${currentChapter.number}, page=$_currentPageIndex, offset=$offset');
+
     await ProgressService.saveProgress(
       _manhwaId!,
       currentChapter.number,
       _currentPageIndex,
-      _scrollController.hasClients ? _scrollController.offset : 0.0,
+      offset,
     );
   }
 
   Future<void> _markChapterComplete(double chapterNumber) async {
     if (_manhwaId == null) return;
     
-    // Use the progress service that automatically handles sync
     await ProgressService.markCompleted(_manhwaId!, chapterNumber);
     
     if (mounted) {
@@ -276,35 +337,39 @@ Future<void> _syncOnExit() async {
 
   void _scheduleProgressSave() {
     _progressSaveTimer?.cancel();
-    _progressSaveTimer = Timer(const Duration(seconds: 2), () {
-      _saveCurrentProgress();
+    _progressSaveTimer = Timer(const Duration(seconds: 2), () async {
+      if (_scrollController.hasClients && mounted) {
+        final offset = _scrollController.offset;
+        final maxExtent = _scrollController.position.maxScrollExtent;
+        if (offset > 0 && maxExtent > 0) {
+          print('Scheduling progress save: page=$_currentPageIndex, offset=$offset, maxExtent=$maxExtent');
+          await _saveCurrentProgress();
+        } else {
+          print('Skipping progress save: invalid offset ($offset) or maxExtent ($maxExtent)');
+        }
+      } else {
+        print('Skipping progress save: no scroll controller or widget not mounted');
+      }
     });
   }
-
-  // === SCROLL AND PROGRESS TRACKING METHODS ===
 
   void _scrollListener() {
     final offset = _scrollController.offset;
     final maxExtent = _scrollController.position.maxScrollExtent;
-    
-    // Calculate progress based only on fully loaded chapters, not partial preloads
+
+    double newScrollProgress;
     if (maxExtent > 0) {
-      // Calculate total height of fully loaded chapters only
-      double fullyLoadedHeight = 0;
-      for (final chapter in _loadedChapters) {
-        if (chapter.isFullyLoaded) {
-          fullyLoadedHeight += chapter.images.length * 800.0 + 100.0;
-        }
-      }
-      
-      // If we have fully loaded content, use that for progress, otherwise use maxExtent
-      if (fullyLoadedHeight > 0) {
-        _scrollProgress = (offset / fullyLoadedHeight).clamp(0.0, 1.0);
-      } else {
-        _scrollProgress = (offset / maxExtent).clamp(0.0, 1.0);
-      }
-      
+      newScrollProgress = (offset / maxExtent).clamp(0.0, 1.0);
       _showScrollToTop = offset > 1000;
+    } else {
+      newScrollProgress = 0.0;
+      _showScrollToTop = false;
+    }
+
+    if ((_scrollProgress - newScrollProgress).abs() > 0.001) {
+      setState(() {
+        _scrollProgress = newScrollProgress;
+      });
     }
 
     if (_scrollController.position.userScrollDirection == ScrollDirection.reverse && _isAppBarVisible) {
@@ -322,50 +387,225 @@ Future<void> _syncOnExit() async {
     if (offset >= maxExtent - 2000 && _shouldLoadNextChapter()) {
       _loadNextChapter();
     }
-    
+
     _updateCurrentPage(offset);
+
+    final actualVisiblePage = _getVisiblePageIndex();
+    if (actualVisiblePage != _currentPageIndex) {
+      setState(() => _currentPageIndex = actualVisiblePage);
+      if (offset > 0) {
+        print('Triggering progress save from scroll: page=$actualVisiblePage, offset=$offset');
+        _scheduleProgressSave();
+      }
+    }
+  }
+
+  int _getVisiblePageIndex() {
+    if (!_scrollController.hasClients) return _currentPageIndex;
+
+    final currentChapterData = _loadedChapters.firstWhere(
+      (c) => c.chapterIndex == _currentVisibleChapterIndex,
+      orElse: () => _loadedChapters.first,
+    );
+
+    final chapterStartOffset = _chapterStartOffsets[_currentVisibleChapterIndex] ?? 0;
+    final viewportCenter = _scrollController.offset + (_scrollController.position.viewportDimension / 2);
+    final offsetInChapter = viewportCenter - chapterStartOffset;
+
+    double cumulativeHeight = 0;
+    for (int i = 0; i < currentChapterData.images.length; i++) {
+      final imageHeight = currentChapterData.imageHeights[currentChapterData.images[i]] ?? 800.0;
+      if (offsetInChapter >= cumulativeHeight && offsetInChapter < cumulativeHeight + imageHeight) {
+        return i;
+      }
+      cumulativeHeight += imageHeight;
+    }
+
+    if (offsetInChapter >= cumulativeHeight) {
+      return currentChapterData.images.length - 1;
+    }
+
+    return _currentPageIndex;
+  }
+
+  Widget _buildEnhancedProgressBar() {
+    final currentChapter = widget.allChapters[_currentVisibleChapterIndex];
+    final currentChapterData = _loadedChapters.firstWhere(
+      (c) => c.chapterIndex == _currentVisibleChapterIndex,
+      orElse: () => _loadedChapters.first,
+    );
+    
+    final totalPagesInChapter = currentChapterData.images.length;
+    final currentPageInChapter = (_currentPageIndex + 1).clamp(1, totalPagesInChapter);
+    
+    final chapterProgress = totalPagesInChapter > 0 
+        ? (currentPageInChapter / totalPagesInChapter).clamp(0.0, 1.0)
+        : 0.0;
+    
+    return AnimatedBuilder(
+      animation: _appBarAnimationController,
+      builder: (context, _) => Transform.translate(
+        offset: Offset(0, -60 * (1 - _appBarAnimationController.value)),
+        child: Positioned(
+          top: kToolbarHeight + MediaQuery.of(context).padding.top,
+          left: 0,
+          right: 0,
+          child: Container(
+            height: 32,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.8),
+                  Colors.black.withOpacity(0.4),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: chapterProgress,
+                      backgroundColor: Colors.white.withOpacity(0.3),
+                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6c5ce7)),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'Page $currentPageInChapter of $totalPagesInChapter',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              shadows: [
+                                Shadow(
+                                  offset: Offset(0, 1),
+                                  blurRadius: 3,
+                                  color: Colors.black87,
+                                ),
+                              ],
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6c5ce7).withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${(chapterProgress * 100).round()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSimpleProgressBar() {
+    return AnimatedBuilder(
+      animation: _appBarAnimationController,
+      builder: (context, _) => Transform.translate(
+        offset: Offset(0, -60 * (1 - _appBarAnimationController.value)),
+        child: Positioned(
+          top: kToolbarHeight + MediaQuery.of(context).padding.top,
+          left: 0,
+          right: 0,
+          child: Container(
+            height: 4,
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: _scrollProgress,
+                backgroundColor: Colors.white.withOpacity(0.2),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6c5ce7)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _updateCurrentPage(double offset) {
     int currentChapter = startingChapterIndex;
     double currentChapterStartOffset = 0;
-    
+
     if (_loadedChapters.length > 1 || _chapterStartOffsets.isEmpty) {
       _calculateChapterOffsets();
     }
-    
+
     final sortedOffsets = _chapterStartOffsets.entries.toList()
       ..sort((a, b) => a.value.compareTo(b.value));
-    
+
     for (int i = 0; i < sortedOffsets.length; i++) {
       final entry = sortedOffsets[i];
       final nextEntry = i < sortedOffsets.length - 1 ? sortedOffsets[i + 1] : null;
-      
+
       if (offset >= entry.value && (nextEntry == null || offset < nextEntry.value)) {
         currentChapter = entry.key;
         currentChapterStartOffset = entry.value;
         break;
       }
     }
-    
+
     final currentChapterData = _loadedChapters.firstWhere(
       (c) => c.chapterIndex == currentChapter,
       orElse: () => _loadedChapters.first,
     );
-    
+
     if (currentChapterData.images.isNotEmpty) {
-      const averageImageHeight = 800.0;
-      final offsetInChapter = offset - currentChapterStartOffset;
-      final rawPageIndex = (offsetInChapter / averageImageHeight).floor();
-      final clampedPageIndex = rawPageIndex.clamp(0, currentChapterData.images.length - 1);
-      
-      if (clampedPageIndex != _currentPageIndex || currentChapter != _currentVisibleChapterIndex) {
-        _currentPageIndex = clampedPageIndex;
-        
-        if (currentChapter != _currentVisibleChapterIndex) {
-          _currentVisibleChapterIndex = currentChapter;
+      final viewportHeight = _scrollController.position.viewportDimension;
+      final viewportCenter = offset + (viewportHeight / 2);
+      final offsetInChapter = viewportCenter - currentChapterStartOffset;
+
+      double cumulativeHeight = 0;
+      int rawPageIndex = 0;
+      for (int i = 0; i < currentChapterData.images.length; i++) {
+        final imageHeight = currentChapterData.imageHeights[currentChapterData.images[i]] ?? 800.0;
+        if (offsetInChapter >= cumulativeHeight && offsetInChapter < cumulativeHeight + imageHeight) {
+          rawPageIndex = i;
+          break;
         }
-        
+        cumulativeHeight += imageHeight;
+      }
+
+      final clampedPageIndex = rawPageIndex.clamp(0, currentChapterData.images.length - 1);
+
+      if (clampedPageIndex != _currentPageIndex || currentChapter != _currentVisibleChapterIndex) {
+        setState(() {
+          _currentPageIndex = clampedPageIndex;
+          if (currentChapter != _currentVisibleChapterIndex) {
+            _currentVisibleChapterIndex = currentChapter;
+          }
+        });
         _scheduleProgressSave();
         _checkChapterCompletion(offset, currentChapter, currentChapterStartOffset);
       }
@@ -375,17 +615,17 @@ Future<void> _syncOnExit() async {
   void _updateCurrentVisibleChapter() {
     final viewportHeight = _scrollController.position.viewportDimension;
     final viewportCenter = _scrollController.offset + (viewportHeight / 2);
-    
+
     for (final chapter in _loadedChapters) {
       final startOffset = _chapterStartOffsets[chapter.chapterIndex] ?? 0;
-      final endOffset = startOffset + (chapter.chapterHeight > 0 ? chapter.chapterHeight : chapter.images.length * 800.0 + 100.0);
-      
-      if (viewportCenter >= startOffset && viewportCenter < endOffset) {
+      final chapterHeight = chapter.isFullyLoaded ? chapter.chapterHeight : (chapter.images.length * 800.0 + 100.0);
+
+      if (viewportCenter >= startOffset && viewportCenter < startOffset + chapterHeight) {
         if (_currentVisibleChapterIndex != chapter.chapterIndex) {
           setState(() => _currentVisibleChapterIndex = chapter.chapterIndex);
           if (_vibrationFeedback) HapticFeedback.selectionClick();
         }
-        break;
+        return;
       }
     }
   }
@@ -417,77 +657,112 @@ Future<void> _syncOnExit() async {
     }
   }
 
-  // === CHAPTER LAYOUT METHODS ===
-
   void _calculateChapterOffsets() {
-    double runningOffset = 0;
-    
-    final sortedChapters = List<_LoadedChapter>.from(_loadedChapters)
-      ..sort((a, b) => a.chapterIndex.compareTo(b.chapterIndex));
-    
-    for (final chapter in sortedChapters) {
-      _chapterStartOffsets[chapter.chapterIndex] = runningOffset;
-      
-      double chapterHeight = chapter.images.length * 800.0 + 100.0;
-      
-      // Only update chapter height for fully loaded chapters
-      if (chapter.isFullyLoaded) {
-        final index = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
-        if (index != -1) {
-          setState(() {
-            _loadedChapters[index] = chapter.copyWith(chapterHeight: chapterHeight);
-          });
-        }
-      } else {
-        // For partially loaded chapters, only count the loaded images + a small buffer
-        final loadedImageCount = chapter.imageLoadingStates.values.where((state) => state == ImageLoadingState.loaded).length;
-        chapterHeight = (loadedImageCount * 800.0) + 100.0;
-      }
-      
-      runningOffset += chapterHeight;
+    double cumulativeOffset = 0;
+    _chapterStartOffsets.clear();
+    for (final chapter in _loadedChapters) {
+      _chapterStartOffsets[chapter.chapterIndex] = cumulativeOffset;
+      cumulativeOffset += chapter.chapterHeight;
+      print('Chapter ${chapter.chapter.number} start offset: ${_chapterStartOffsets[chapter.chapterIndex]}, height: ${chapter.chapterHeight}');
     }
   }
 
-  // === CHAPTER LOADING METHODS ===
-
   void _loadFullChapter(_LoadedChapter chapter) async {
     print('Starting full load of ${chapter.images.length} images for chapter ${chapter.chapter.number}');
-    
+
     final imageLoadingStates = {for (var url in chapter.images) url: ImageLoadingState.loading};
+    final imageHeights = Map<String, double>.from(chapter.imageHeights);
     _updateChapterImageStates(chapter.chapterIndex, imageLoadingStates);
 
     final futures = chapter.images.asMap().entries.map((entry) async {
       final index = entry.key;
       final url = entry.value;
-      
+
       try {
         final imageProvider = NetworkImage(url, headers: _imageHeaders());
+        final imageStream = imageProvider.resolve(ImageConfiguration(
+          size: Size(MediaQuery.of(context).size.width, 0),
+        ));
+
+        Completer<Size> completer = Completer();
+        ImageStreamListener? listener;
+        listener = ImageStreamListener(
+          (ImageInfo info, bool synchronousCall) {
+            final size = Size(info.image.width.toDouble(), info.image.height.toDouble());
+            completer.complete(size);
+            imageStream.removeListener(listener!);
+          },
+          onError: (exception, stackTrace) {
+            completer.completeError(exception, stackTrace);
+            imageStream.removeListener(listener!);
+          },
+        );
+        imageStream.addListener(listener);
+
+        final size = await completer.future.timeout(const Duration(seconds: 30));
+        final aspectRatio = size.width / size.height;
+        final constrainedWidth = MediaQuery.of(context).size.width * 0.7;
+        final scaledHeight = constrainedWidth / aspectRatio;
+
         await precacheImage(imageProvider, context).timeout(const Duration(seconds: 30));
         _preloadedImages[url] = imageProvider;
         _updateImageLoadingState(url, ImageLoadingState.loaded);
+        imageHeights[url] = scaledHeight;
+
+        print('Image ${index + 1} loaded: URL=$url, height=$scaledHeight');
+
+        final chapterIndex = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
+        if (chapterIndex != -1 && mounted) {
+          final totalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
+          setState(() {
+            _loadedChapters[chapterIndex] = _loadedChapters[chapterIndex].copyWith(
+              imageHeights: Map.from(imageHeights),
+              chapterHeight: totalHeight,
+            );
+          });
+          print('Updated chapter ${chapter.chapter.number}: imageHeights=${imageHeights.length}/${chapter.images.length}, chapterHeight=$totalHeight');
+          _calculateChapterOffsets();
+        }
         return true;
       } catch (e) {
-        if (index < 5) print('Failed to load image ${index + 1}: $e');
+        print('Failed to load image ${index + 1} ($url): $e');
         _updateImageLoadingState(url, ImageLoadingState.error);
+        imageHeights[url] = 800.0;
+        final chapterIndex = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
+        if (chapterIndex != -1 && mounted) {
+          final totalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
+          setState(() {
+            _loadedChapters[chapterIndex] = _loadedChapters[chapterIndex].copyWith(
+              imageHeights: Map.from(imageHeights),
+              chapterHeight: totalHeight,
+            );
+          });
+          print('Updated chapter ${chapter.chapter.number} (error case): imageHeights=${imageHeights.length}/${chapter.images.length}, chapterHeight=$totalHeight');
+          _calculateChapterOffsets();
+        }
         return false;
       }
     });
 
     final results = await Future.wait(futures);
     final successCount = results.where((success) => success).length;
-    
+
     print('Chapter ${chapter.chapter.number}: FULLY LOADED $successCount/${chapter.images.length} images');
-    
+
     final chapterIndex = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
-    if (chapterIndex != -1) {
+    if (chapterIndex != -1 && mounted) {
+      final totalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
       setState(() {
-        _loadedChapters[chapterIndex] = _loadedChapters[chapterIndex].copyWith(isFullyLoaded: true);
+        _loadedChapters[chapterIndex] = _loadedChapters[chapterIndex].copyWith(
+          isFullyLoaded: imageHeights.length == chapter.images.length && successCount == chapter.images.length,
+          imageHeights: Map.from(imageHeights),
+          chapterHeight: totalHeight,
+        );
       });
+      print('Final update for chapter ${chapter.chapter.number}: imageHeights=${imageHeights.length}/${chapter.images.length}, chapterHeight=$totalHeight, isFullyLoaded=${imageHeights.length == chapter.images.length && successCount == chapter.images.length}');
+      _calculateChapterOffsets();
     }
-    
-    _calculateChapterOffsets();
-    
-    // Only preload next chapter partially, not fully
+
     if (successCount > chapter.images.length * 0.8) {
       _preloadNextChapterPartially();
     }
@@ -497,7 +772,6 @@ Future<void> _syncOnExit() async {
     if (_currentVisibleChapterIndex < widget.allChapters.length - 1 && !_isLoadingNext) {
       final nextIndex = _currentVisibleChapterIndex + 1;
       
-      // Check if next chapter is already in loaded chapters
       final nextChapterExists = _loadedChapters.any((c) => c.chapterIndex == nextIndex);
       
       if (!nextChapterExists) {
@@ -514,7 +788,6 @@ Future<void> _syncOnExit() async {
           _loadedChapters.add(nextChapter);
         });
         
-        // Only preload first 10 images of next chapter
         final imagesToPreload = nextChapter.images.take(10).toList();
         final imageLoadingStates = {for (var url in imagesToPreload) url: ImageLoadingState.loading};
         _updateChapterImageStates(nextIndex, imageLoadingStates);
@@ -605,8 +878,6 @@ Future<void> _syncOnExit() async {
     }
   }
 
-  // === IMAGE LOADING HELPER METHODS ===
-
   Map<String, String> _imageHeaders() => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
@@ -632,8 +903,6 @@ Future<void> _syncOnExit() async {
       setState(() => _loadedChapters[index] = _loadedChapters[index].copyWith(imageLoadingStates: states));
     }
   }
-
-  // === USER INTERACTION METHODS ===
 
   void _handleTap(TapUpDetails details) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -697,8 +966,6 @@ Future<void> _syncOnExit() async {
       _loadFullChapter(newChapter);
     }
   }
-
-  // === UI HELPER METHODS ===
 
   Widget _buildSyncIndicator() {
     if (!ApiService.isLoggedIn) return const SizedBox.shrink();
@@ -834,160 +1101,146 @@ Future<void> _syncOnExit() async {
     );
   }
 
-  // === BUILD METHODS ===
-
   @override
   Widget build(BuildContext context) {
     final currentChapter = widget.allChapters[_currentVisibleChapterIndex];
-      return WillPopScope(
-    onWillPop: () async {
-      await _syncOnExit();
-      return true;
-    },
-    child: Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: AnimatedBuilder(
-          animation: _appBarAnimationController,
-          builder: (context, _) => Transform.translate(
-            offset: Offset(0, -60 * (1 - _appBarAnimationController.value)),
-            child: AppBar(
-              title: GestureDetector(
-                onTap: () => showModalBottomSheet(
-                  context: context,
-                  backgroundColor: Colors.transparent,
-                  builder: (context) => _ChapterSelectorSheet(
-                    chapters: widget.allChapters,
-                    currentIndex: _currentVisibleChapterIndex,
-                    onChapterSelected: _jumpToChapter,
+    return WillPopScope(
+      onWillPop: () async {
+        await _syncOnExit();
+        return true;
+      },
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(kToolbarHeight),
+          child: AnimatedBuilder(
+            animation: _appBarAnimationController,
+            builder: (context, _) => Transform.translate(
+              offset: Offset(0, -60 * (1 - _appBarAnimationController.value)),
+              child: AppBar(
+                title: GestureDetector(
+                  onTap: () => showModalBottomSheet(
+                    context: context,
+                    backgroundColor: Colors.transparent,
+                    builder: (context) => _ChapterSelectorSheet(
+                      chapters: widget.allChapters,
+                      currentIndex: _currentVisibleChapterIndex,
+                      onChapterSelected: _jumpToChapter,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Ch. ${currentChapter.number}: ${currentChapter.title}',
+                          style: const TextStyle(fontSize: 16),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(Icons.keyboard_arrow_down, size: 20),
+                    ],
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Ch. ${currentChapter.number}: ${currentChapter.title}',
-                        style: const TextStyle(fontSize: 16),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const Icon(Icons.keyboard_arrow_down, size: 20),
-                  ],
-                ),
+                centerTitle: true,
+                backgroundColor: Colors.black.withOpacity(0.8),
+                elevation: 0,
+                systemOverlayStyle: SystemUiOverlayStyle.light,
+                leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+                actions: [
+                  _buildSyncIndicator(),
+                  IconButton(icon: const Icon(Icons.tune), onPressed: _showReaderSettings),
+                  IconButton(
+                    icon: const Icon(Icons.bookmark_border),
+                    onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bookmarked!'))),
+                  ),
+                ],
               ),
-              centerTitle: true,
-              backgroundColor: Colors.black.withOpacity(0.8),
-              elevation: 0,
-              systemOverlayStyle: SystemUiOverlayStyle.light,
-              leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-              actions: [
-                _buildSyncIndicator(),
-                IconButton(icon: const Icon(Icons.tune), onPressed: _showReaderSettings),
-                IconButton(
-                  icon: const Icon(Icons.bookmark_border),
-                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bookmarked!'))),
-                ),
-              ],
             ),
           ),
         ),
-      ),
-      body: Container(
-        color: Platform.isWindows ? const Color(0xFF2a1a3a) : Colors.black.withOpacity(1.0 - _brightness),
-        child: Stack(
-          children: [
-            GestureDetector(
-              onTapUp: _handleTap,
-              child: Transform.scale(
-                scale: _imageScale,
-                child: Scrollbar(
-                  controller: _scrollController,
-                  thumbVisibility: true,
-                  child: ListView.builder(
+        body: Container(
+          color: Platform.isWindows ? const Color(0xFF2a1a3a) : Colors.black.withOpacity(1.0 - _brightness),
+          child: Stack(
+            children: [
+              GestureDetector(
+                onTapUp: _handleTap,
+                child: Transform.scale(
+                  scale: _imageScale,
+                  child: Scrollbar(
                     controller: _scrollController,
-                    physics: const ClampingScrollPhysics(),
-                    padding: EdgeInsets.zero,
-                    itemCount: _loadedChapters.fold(0, (sum, ch) => sum! + ch.images.length + 1),
-                    itemBuilder: _buildItem,
+                    thumbVisibility: true,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      physics: const ClampingScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: _loadedChapters.fold(0, (sum, ch) => sum! + ch.images.length + 1),
+                      itemBuilder: _buildItem,
+                    ),
                   ),
                 ),
               ),
-            ),
-            Positioned(
-              top: kToolbarHeight + MediaQuery.of(context).padding.top,
-              left: 0,
-              right: 0,
-              child: SizedBox(
-                height: 3,
-                child: LinearProgressIndicator(
-                  value: _scrollProgress,
-                  backgroundColor: Colors.transparent,
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6c5ce7)),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 30,
-              right: 16,
-              child: AnimatedBuilder(
-                animation: _appBarAnimationController,
-                builder: (context, _) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_currentVisibleChapterIndex > 0 &&
-                        !_loadedChapters.any((ch) => ch.chapterIndex == _currentVisibleChapterIndex - 1))
+              _buildEnhancedProgressBar(),
+              Positioned(
+                bottom: 30,
+                right: 16,
+                child: AnimatedBuilder(
+                  animation: _appBarAnimationController,
+                  builder: (context, _) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_currentVisibleChapterIndex > 0 &&
+                          !_loadedChapters.any((ch) => ch.chapterIndex == _currentVisibleChapterIndex - 1))
+                        Transform.translate(
+                          offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
+                          child: FloatingActionButton(
+                            mini: true,
+                            heroTag: "load_previous",
+                            onPressed: _isLoadingPrevious
+                                ? null
+                                : () {
+                                    _loadPreviousChapter();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Loading Chapter $_currentVisibleChapterIndex...'), duration: const Duration(seconds: 1)),
+                                    );
+                                  },
+                            backgroundColor: _isLoadingPrevious ? Colors.grey : const Color(0xFF6c5ce7).withOpacity(0.9),
+                            child: _isLoadingPrevious
+                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
+                                : const Icon(Icons.keyboard_arrow_up, color: Colors.white),
+                          ),
+                        ),
+                      if (_showScrollToTop) const SizedBox(height: 8),
+                      if (_showScrollToTop)
+                        Transform.translate(
+                          offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
+                          child: FloatingActionButton(
+                            mini: true,
+                            heroTag: "scroll_top",
+                            onPressed: _scrollToTop,
+                            backgroundColor: Colors.black.withOpacity(0.7),
+                            child: const Icon(Icons.vertical_align_top, color: Colors.white),
+                          ),
+                        ),
+                      if (_showScrollToTop) const SizedBox(height: 8),
                       Transform.translate(
                         offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
                         child: FloatingActionButton(
                           mini: true,
-                          heroTag: "load_previous",
-                          onPressed: _isLoadingPrevious
-                              ? null
-                              : () {
-                                  _loadPreviousChapter();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Loading Chapter $_currentVisibleChapterIndex...'), duration: const Duration(seconds: 1)),
-                                  );
-                                },
-                          backgroundColor: _isLoadingPrevious ? Colors.grey : const Color(0xFF6c5ce7).withOpacity(0.9),
-                          child: _isLoadingPrevious
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
-                              : const Icon(Icons.keyboard_arrow_up, color: Colors.white),
+                          heroTag: "fullscreen",
+                          onPressed: _toggleFullscreen,
+                          backgroundColor: _isFullscreen ? const Color(0xFF6c5ce7) : Colors.black.withOpacity(0.7),
+                          child: Icon(_isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen, color: Colors.white),
                         ),
                       ),
-                    if (_showScrollToTop) const SizedBox(height: 8),
-                    if (_showScrollToTop)
-                      Transform.translate(
-                        offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
-                        child: FloatingActionButton(
-                          mini: true,
-                          heroTag: "scroll_top",
-                          onPressed: _scrollToTop,
-                          backgroundColor: Colors.black.withOpacity(0.7),
-                          child: const Icon(Icons.vertical_align_top, color: Colors.white),
-                        ),
-                      ),
-                    if (_showScrollToTop) const SizedBox(height: 8),
-                    Transform.translate(
-                      offset: Offset(0, 70 * (1 - _appBarAnimationController.value)),
-                      child: FloatingActionButton(
-                        mini: true,
-                        heroTag: "fullscreen",
-                        onPressed: _toggleFullscreen,
-                        backgroundColor: _isFullscreen ? const Color(0xFF6c5ce7) : Colors.black.withOpacity(0.7),
-                        child: Icon(_isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen, color: Colors.white),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
     );
   }
 

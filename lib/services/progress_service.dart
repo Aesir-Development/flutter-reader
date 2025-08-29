@@ -16,31 +16,32 @@ class ProgressService {
 
   // Save progress locally only - NO immediate sync
   static Future<void> saveProgress(
-    String manhwaId, 
-    double chapterNumber, 
-    int pageIndex, 
-    double scrollPosition,
-  ) async {
-    // Save locally first (this is fast)
-    await SQLiteProgressService.saveProgress(manhwaId, chapterNumber, pageIndex, scrollPosition);
+  String manhwaId, 
+  double chapterNumber, 
+  int pageIndex, 
+  double scrollPosition,
+) async {
+  print('ProgressService.saveProgress: manhwaId=$manhwaId, chapter=$chapterNumber, page=$pageIndex, scrollPosition=$scrollPosition');
+
+  // Save locally first
+  await SQLiteProgressService.saveProgress(manhwaId, chapterNumber, pageIndex, scrollPosition);
+  
+  // Queue for sync if logged in
+  if (ApiService.isLoggedIn) {
+    final update = ProgressUpdate(
+      manhwaId: manhwaId,
+      chapterNumber: chapterNumber,
+      currentPage: pageIndex,
+      scrollPosition: scrollPosition,
+      isRead: false,
+    );
     
-    // Queue for sync if logged in, but DON'T sync immediately
-    if (ApiService.isLoggedIn) {
-      final update = ProgressUpdate(
-        manhwaId: manhwaId,
-        chapterNumber: chapterNumber,
-        currentPage: pageIndex,
-        scrollPosition: scrollPosition,
-        isRead: false,
-      );
-      
-      await ManhwaService.addPendingProgressUpdate(update);
-      _hasPendingSync = true;
-      
-      // Don't sync immediately - let it be handled by chapter exit or periodic sync
-      print('Progress saved locally and queued for sync (${manhwaId}_${chapterNumber}_${pageIndex})');
-    }
+    await ManhwaService.addPendingProgressUpdate(update);
+    _hasPendingSync = true;
+    
+    print('Progress saved locally and queued for sync (${manhwaId}_${chapterNumber}_${pageIndex}_$scrollPosition)');
   }
+}
 
   // Mark completed and queue for sync (but don't sync immediately unless requested)
   static Future<void> markCompleted(String manhwaId, double chapterNumber, {bool syncImmediately = false}) async {
