@@ -784,4 +784,94 @@ class ManhwaService {
     _initialized = false;
     _factoryInitialized = false;
   }
+  // Add these methods to your existing ManhwaService class
+
+  // Server IP Management methods
+  static Future<void> saveCustomServerIP(String serverIP) async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.insert(
+      'app_settings',
+      {
+        'key': 'custom_server_ip',
+        'value': serverIP,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<String?> getCustomServerIP() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    final result = await db.query(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: ['custom_server_ip'],
+      limit: 1,
+    );
+    
+    if (result.isNotEmpty) {
+      return result.first['value'] as String?;
+    }
+    
+    return null;
+  }
+
+  static Future<void> removeCustomServerIP() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.delete(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: ['custom_server_ip'],
+    );
+  }
+
+  // Optional: Get all app settings for debugging
+  static Future<Map<String, String>> getAllSettings() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    final result = await db.query('app_settings');
+    final settings = <String, String>{};
+    
+    for (final row in result) {
+      settings[row['key'] as String] = row['value'] as String;
+    }
+    
+    return settings;
+  }
+
+  // Enhanced method to get database info including progress records
+  static Future<Map<String, int>> getDatabaseInfo() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    
+    final manhwaCount = await db.rawQuery('SELECT COUNT(*) as count FROM manhwas');
+    final chapterCount = await db.rawQuery('SELECT COUNT(*) as count FROM chapters');
+    final readChapterCount = await db.rawQuery('SELECT COUNT(*) as count FROM chapters WHERE is_read = 1');
+    final progressRecords = await db.rawQuery('SELECT COUNT(*) as count FROM chapters WHERE current_page > 0 OR scroll_position > 0');
+    final settingsCount = await db.rawQuery('SELECT COUNT(*) as count FROM app_settings');
+    
+    return {
+      'total_manhwas': Sqflite.firstIntValue(manhwaCount) ?? 0,
+      'total_chapters': Sqflite.firstIntValue(chapterCount) ?? 0,
+      'read_chapters': Sqflite.firstIntValue(readChapterCount) ?? 0,
+      'progress_records': Sqflite.firstIntValue(progressRecords) ?? 0,
+      'app_settings': Sqflite.firstIntValue(settingsCount) ?? 0,
+    };
+  }
+
+  // Clear all app settings (useful for troubleshooting)
+  static Future<void> clearAllSettings() async {
+    await _ensureInitialized();
+    
+    final db = await database;
+    await db.delete('app_settings');
+    await db.delete('pending_sync');
+  }
 }

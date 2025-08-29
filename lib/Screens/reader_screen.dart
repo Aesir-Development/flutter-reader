@@ -775,7 +775,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
       final nextChapterExists = _loadedChapters.any((c) => c.chapterIndex == nextIndex);
       
       if (!nextChapterExists) {
-        print('Preloading first 10 images of next chapter ${nextIndex + 1}');
+        print('Preloading first 2 images of next chapter ${nextIndex + 1}');
         
         final nextChapter = _LoadedChapter(
           chapterIndex: nextIndex,
@@ -788,7 +788,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
           _loadedChapters.add(nextChapter);
         });
         
-        final imagesToPreload = nextChapter.images.take(10).toList();
+        final imagesToPreload = nextChapter.images.take(2).toList();
         final imageLoadingStates = {for (var url in imagesToPreload) url: ImageLoadingState.loading};
         _updateChapterImageStates(nextIndex, imageLoadingStates);
         

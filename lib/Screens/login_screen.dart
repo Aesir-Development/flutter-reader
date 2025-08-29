@@ -16,16 +16,27 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _ipController = TextEditingController();
   
   bool _isPasswordVisible = false;
   bool _isLoading = false;
   bool _isRegisterMode = false;
   bool _isOfflineMode = false;
+  String _currentServerIP = 'Default Server'; // You can set your default server here
 
   @override
   void initState() {
     super.initState();
+    _loadCurrentServerIP();
     _checkExistingLogin();
+  }
+
+  Future<void> _loadCurrentServerIP() async {
+    // Load the current server IP from your ApiService or SharedPreferences
+    // This is a placeholder - you'll need to implement this based on your ApiService
+    setState(() {
+      _currentServerIP = ApiService.getCurrentServerIP() ?? 'Default Server';
+    });
   }
 
   Future<void> _checkExistingLogin() async {
@@ -53,6 +64,7 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _ipController.dispose();
     super.dispose();
   }
 
@@ -117,6 +129,164 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
       
     } catch (e) {
       _showError('Failed to clear database: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // Show server IP input dialog
+  Future<void> _showServerIPDialog() async {
+    _ipController.text = _currentServerIP == 'Default Server' ? '' : _currentServerIP;
+    
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2a2a2a),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6c5ce7).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.dns, color: Color(0xFF6c5ce7), size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Text('Server Configuration', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Enter the IP address or domain of your server:',
+              style: TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _ipController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Server IP/Domain',
+                labelStyle: const TextStyle(color: Colors.grey),
+                hintText: 'e.g. 192.168.1.100:3000 or myserver.com',
+                hintStyle: TextStyle(color: Colors.grey.withOpacity(0.6)),
+                prefixIcon: const Icon(Icons.computer, color: Color(0xFF6c5ce7)),
+                filled: true,
+                fillColor: const Color(0xFF3a3a3a),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFF6c5ce7)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6c5ce7).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF6c5ce7).withOpacity(0.3)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '💡 Tips:',
+                    style: TextStyle(color: Color(0xFF6c5ce7), fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '• Include port if needed (e.g. :8080)\n• Use http:// or https:// prefix if required\n• Leave empty to use default server',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              // Reset to default server
+              Navigator.pop(context, 'DEFAULT');
+            },
+            child: const Text(
+              'Use Default',
+              style: TextStyle(color: Colors.orange),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final ip = _ipController.text.trim();
+              if (ip.isEmpty) {
+                Navigator.pop(context, 'DEFAULT');
+              } else {
+                Navigator.pop(context, ip);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6c5ce7),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text(
+              'Connect',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    
+    if (result != null) {
+      await _updateServerIP(result);
+    }
+  }
+
+  Future<void> _updateServerIP(String serverIP) async {
+    setState(() => _isLoading = true);
+    
+    try {
+      if (serverIP == 'DEFAULT') {
+        // Reset to default server
+        await ApiService.setServerIP(null); // This should reset to default
+        setState(() {
+          _currentServerIP = 'Default Server';
+        });
+        _showSuccess('Switched to default server');
+      } else {
+        // Validate and set custom server IP
+        await ApiService.setServerIP(serverIP);
+        
+        // Test connection to the new server
+        final canConnect = await ApiService.checkConnection();
+        
+        if (canConnect) {
+          setState(() {
+            _currentServerIP = serverIP;
+          });
+          _showSuccess('Connected to $serverIP successfully!');
+        } else {
+          _showError('Failed to connect to $serverIP. Please check the address.');
+          // Revert to previous server if connection failed
+          await _loadCurrentServerIP();
+        }
+      }
+    } catch (e) {
+      _showError('Error updating server: $e');
+      await _loadCurrentServerIP();
     } finally {
       setState(() => _isLoading = false);
     }
@@ -299,10 +469,10 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
     );
   }
 
-  void _showSuccess(String action) {
+  void _showSuccess(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('$action successful! Welcome to Manhwa Reader'),
+        content: Text(message),
         backgroundColor: Colors.green,
       ),
     );
@@ -387,7 +557,9 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _buildHeader(),
-                const SizedBox(height: 40),
+                const SizedBox(height: 24),
+                _buildServerStatus(),
+                const SizedBox(height: 24),
                 if (!_isOfflineMode) ...[
                   _buildAuthForm(),
                   const SizedBox(height: 24),
@@ -447,6 +619,66 @@ class _ManhwaLoginScreenState extends State<ManhwaLoginScreen> {
           textAlign: TextAlign.center,
         ),
       ],
+    );
+  }
+
+  Widget _buildServerStatus() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2a2a2a),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF6c5ce7).withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6c5ce7).withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.dns,
+              color: Color(0xFF6c5ce7),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Server',
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  _currentServerIP,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: _isLoading ? null : _showServerIPDialog,
+            icon: const Icon(
+              Icons.settings,
+              color: Color(0xFF6c5ce7),
+              size: 20,
+            ),
+            tooltip: 'Change Server',
+          ),
+        ],
+      ),
     );
   }
 
