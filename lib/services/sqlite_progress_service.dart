@@ -59,7 +59,25 @@ class SQLiteProgressService {
       },
     );
   }
-
+static Future<T> _executeWithRetry<T>(Future<T> Function() operation, {int maxRetries = 3}) async {
+  int attempts = 0;
+  
+  while (attempts < maxRetries) {
+    try {
+      return await operation();
+    } catch (e) {
+      attempts++;
+      if (e.toString().contains('database is locked') && attempts < maxRetries) {
+        print('Database locked, retrying... (attempt $attempts/$maxRetries)');
+        await Future.delayed(Duration(milliseconds: 100 * attempts)); // Exponential backoff
+        continue;
+      }
+      rethrow; // If not a lock error or max retries reached
+    }
+  }
+  
+  throw Exception('Max retries exceeded');
+}
   static Future<void> _createTables(Database db) async {
     // Create manhwas table
     await db.execute('''
@@ -135,13 +153,14 @@ class SQLiteProgressService {
   }
 
   // Save reading position for a chapter
-  static Future<void> saveProgress(
-    String manhwaId, 
-    double chapterNumber, 
-    int pageIndex, 
-    double scrollPosition,
-    {bool markAsRead = false}
-  ) async {
+static Future<void> saveProgress(
+  String manhwaId, 
+  double chapterNumber, 
+  int pageIndex, 
+  double scrollPosition,
+  {bool markAsRead = false}
+) async {
+  await _executeWithRetry(() async {
     final db = await database;
     
     final updateData = {
@@ -160,15 +179,14 @@ class SQLiteProgressService {
       where: 'manhwa_id = ? AND number = ?',
       whereArgs: [manhwaId, chapterNumber],
     );
-
-    // Update cache
+  });
     _updateCache(manhwaId, chapterNumber, {
-      'pageIndex': pageIndex,
-      'scrollPosition': scrollPosition,
-      'lastRead': DateTime.now().toIso8601String(),
-      'isRead': markAsRead,
-    });
-  }
+    'pageIndex': pageIndex,
+    'scrollPosition': scrollPosition,
+    'lastRead': DateTime.now().toIso8601String(),
+    'isRead': markAsRead,
+  });
+}
 
   // Get reading position for a chapter
 static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
@@ -434,14 +452,16 @@ for (final row in results) {
   // ===== APP SETTINGS METHODS =====
   
   // Save a setting (auth tokens, preferences, etc.)
-  static Future<void> saveSetting(String key, String value) async {
+static Future<void> saveSetting(String key, String value) async {
+  await _executeWithRetry(() async {
     final db = await database;
     await db.rawInsert(
       'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
       [key, value]
     );
-    print('Setting saved: $key');
-  }
+  });
+  print('Setting saved: $key');
+}
 
   // Get a setting by key
   static Future<String?> getSetting(String key) async {
@@ -462,7 +482,8 @@ for (final row in results) {
   }
 
   // Delete a setting by key
-  static Future<void> deleteSetting(String key) async {
+static Future<void> deleteSetting(String key) async {
+  await _executeWithRetry(() async {
     final db = await database;
     final deletedRows = await db.delete(
       'app_settings',
@@ -470,7 +491,8 @@ for (final row in results) {
       whereArgs: [key],
     );
     print('Setting deleted: $key ($deletedRows rows affected)');
-  }
+  });
+}
 
   // Get all settings
   static Future<Map<String, String>> getAllSettings() async {

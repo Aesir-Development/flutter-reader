@@ -7,7 +7,7 @@ import 'package:path/path.dart';
 import '../models/manwha.dart';
 import '../models/chapter.dart';
 import 'api_service.dart';
-
+import 'sqlite_progress_service.dart';
 class ManhwaService {
   static Database? _database;
   static bool _initialized = false;
@@ -432,16 +432,10 @@ class ManhwaService {
   }
 
   // Sync state management
-  static Future<void> setLastSyncTime(DateTime time) async {
-    await _ensureInitialized();
-    
-    final db = await database;
-    await db.insert(
-      'app_settings',
-      {'key': 'last_sync', 'value': time.toIso8601String()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
+static Future<void> setLastSyncTime(DateTime time) async {
+  // Use the retry-protected method instead of direct database access
+  await SQLiteProgressService.saveSetting('last_sync', time.toIso8601String());
+}
 
   static Future<DateTime?> getLastSyncTime() async {
     await _ensureInitialized();

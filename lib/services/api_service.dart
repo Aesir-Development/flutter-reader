@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'manhwa_service.dart';
-
+import 'sqlite_progress_service.dart';
 class ApiService {
   static const String _defaultBaseUrl = 'http://localhost:8080';
   static String _baseUrl = _defaultBaseUrl;
@@ -197,7 +197,7 @@ class ApiService {
         final syncData = SyncData.fromJson(data);
         
         // Save last sync time in database
-        await ManhwaService.setLastSyncTime(DateTime.now());
+        await SQLiteProgressService.saveSetting('last_sync', DateTime.now().toIso8601String());
         
         // Update connection cache
         _updateConnectionCache(true);
