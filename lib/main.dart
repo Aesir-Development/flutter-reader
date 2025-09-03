@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutterreader/Screens/login_screen.dart';
-import 'package:flutterreader/services/sqlite_progress_service.dart';
+import 'services/sqlite_progress_service.dart';
 import 'services/manhwa_service.dart';
 import 'services/progress_service.dart';
 import 'services/api_service.dart';
@@ -10,7 +10,7 @@ void main() async {
   
   // Initialize services
   await initializeApp();
-    //await SQLiteProgressService.addDummyData();
+    await SQLiteProgressService.addDummyData();
   runApp(MyApp());
 }
 

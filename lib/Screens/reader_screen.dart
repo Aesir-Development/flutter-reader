@@ -6,6 +6,7 @@ import 'dart:io' show Platform;
 import '../services/progress_service.dart';
 import '../services/api_service.dart';
 import 'dart:async';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 
 enum ImageLoadingState { waiting, loading, loaded, error }
@@ -47,6 +48,83 @@ class _LoadedChapter {
   }
 }
 
+// Simple divider widget that detects when it's scrolled past
+class _DividerWidget extends StatefulWidget {
+  final int imageIndex;
+  final int chapterIndex;
+  final VoidCallback onPassed;
+
+  const _DividerWidget({
+    Key? key,
+    required this.imageIndex,
+    required this.chapterIndex,
+    required this.onPassed,
+  }) : super(key: key);
+
+  @override
+  State<_DividerWidget> createState() => _DividerWidgetState();
+}
+
+class _DividerWidgetState extends State<_DividerWidget> {
+  Timer? _triggerTimer;
+  bool _hasBeenAbove = false;  // Track if we've been above this divider
+  bool _hasBeenBelow = false;  // Track if we've been below this divider
+
+  @override
+  void dispose() {
+    _triggerTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 1,
+      width: double.infinity,
+      color: Colors.transparent,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              final renderBox = context.findRenderObject() as RenderBox?;
+              if (renderBox != null) {
+                try {
+                  final widgetPosition = renderBox.localToGlobal(Offset.zero);
+                  final screenCenter = MediaQuery.of(context).size.height / 2;
+                  
+                  final isAbove = widgetPosition.dy > screenCenter;
+                  final isBelow = widgetPosition.dy < screenCenter;
+                  
+                  // Track positions
+                  if (isAbove) _hasBeenAbove = true;
+                  if (isBelow) _hasBeenBelow = true;
+                  
+                  // Trigger when we cross from above to below (scrolling down)
+                  if (_hasBeenAbove && isBelow) {
+                    widget.onPassed();
+                    print('Divider ${widget.imageIndex} crossed going DOWN -> Page ${widget.imageIndex + 2}');
+                    _hasBeenAbove = false;
+                  }
+                  
+                  // Trigger when we cross from below to above (scrolling up)  
+                  if (_hasBeenBelow && isAbove) {
+                    widget.onPassed();
+                    print('Divider ${widget.imageIndex} crossed going UP -> Page ${widget.imageIndex + 1}');
+                    _hasBeenBelow = false;
+                  }
+                  
+                } catch (e) {
+                  // Ignore render errors
+                }
+              }
+            }
+          });
+          return const SizedBox.shrink();
+        },
+      ),
+    );
+  }
+}
 class ReaderScreen extends StatefulWidget {
   final Chapter chapter;
   final List<Chapter> allChapters;
@@ -102,7 +180,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   bool _hasScrolledToInitialPosition = false;
   bool _isResumingToInitialPosition = false;
   final Map<int, bool> _completedChapters = {};
-  
+  final Map<int, double> _chapterDividerHeights = {};
   // Position tracking
   final Map<int, GlobalKey> _imageDividerKeys = {};
   final Map<int, double> _dividerPositions = {};
@@ -183,95 +261,111 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   // SCROLL POSITION AND NAVIGATION
   // =============================================================================
 
-  void _scrollToInitialPosition() {
-    if (widget.initialPageIndex > 0 || widget.initialScrollPosition > 0) {
-      _isResumingToInitialPosition = true;
-
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        await _waitForChapterToLoad(startingChapterIndex);
-
-        if (!mounted || !_scrollController.hasClients) return;
-
-        double targetOffset = 0;
-
-        if (widget.initialScrollPosition > 0) {
-          targetOffset = widget.initialScrollPosition;
-        } else if (widget.initialPageIndex > 0) {
-          targetOffset = widget.initialPageIndex * 800.0;
-        }
-
-        final maxScrollExtent = _scrollController.position.maxScrollExtent;
-        final finalOffset = targetOffset.clamp(0.0, maxScrollExtent);
-
-        await _scrollController.animateTo(
-          finalOffset,
-          duration: const Duration(milliseconds: 1000),
-          curve: Curves.easeInOutCubic,
-        );
-
-        setState(() {
-          _currentPageIndex = widget.initialPageIndex;
-        });
-
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) {
-            _isResumingToInitialPosition = false;
-          }
-        });
-
-        if (targetOffset > 0 && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Resumed from page ${widget.initialPageIndex + 1}'),
-              duration: const Duration(seconds: 2),
-              backgroundColor: const Color(0xFF6c5ce7),
-            ),
-          );
-        }
-
-        _hasScrolledToInitialPosition = true;
-      });
-    }
+void _scrollToInitialPosition() {
+  // Check if current chapter is completed - if so, start from beginning
+  final currentChapter = widget.allChapters[startingChapterIndex];
+  final isChapterCompleted = _completedChapters[startingChapterIndex] == true;
+  
+  if (isChapterCompleted) {
+    print('Chapter ${currentChapter.number} is completed - starting from beginning instead of saved position');
+    _hasScrolledToInitialPosition = true;
+    return; // Don't scroll to saved position, stay at top
   }
+  
+  if (widget.initialPageIndex > 0 || widget.initialScrollPosition > 0) {
+    _isResumingToInitialPosition = true;
 
-  void _scrollListener() {
-    final offset = _scrollController.offset;
-    final maxExtent = _scrollController.position.maxScrollExtent;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _waitForChapterToLoad(startingChapterIndex);
 
-    double newScrollProgress;
-    if (maxExtent > 0) {
-      newScrollProgress = (offset / maxExtent).clamp(0.0, 1.0);
-      _showScrollToTop = offset > 1000;
-    } else {
-      newScrollProgress = 0.0;
-      _showScrollToTop = false;
-    }
+      if (!mounted || !_scrollController.hasClients) return;
 
-    if ((_scrollProgress - newScrollProgress).abs() > 0.001) {
-      setState(() {
-        _scrollProgress = newScrollProgress;
-      });
-    }
+      double targetOffset = 0;
 
-    _handleAppBarVisibility();
-
-    if (offset >= maxExtent - 2000 && _shouldLoadNextChapter()) {
-      _loadNextChapter();
-    }
-
-    final now = DateTime.now();
-    if (_lastPageUpdateTime == null || 
-        now.difference(_lastPageUpdateTime!) > const Duration(milliseconds: 200)) {
-      _lastPageUpdateTime = now;
-      _updateCurrentPage(offset);
-      
-      if (_dividerPositions.length < _loadedChapters.fold(0, (sum, ch) => sum + ch.images.length)) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) _calculateDividerPositions();
-        });
+      if (widget.initialScrollPosition > 0) {
+        targetOffset = widget.initialScrollPosition;
+      } else if (widget.initialPageIndex > 0) {
+        targetOffset = widget.initialPageIndex * 800.0;
       }
+
+      final maxScrollExtent = _scrollController.position.maxScrollExtent;
+      final finalOffset = targetOffset.clamp(0.0, maxScrollExtent);
+
+      await _scrollController.animateTo(
+        finalOffset,
+        duration: const Duration(milliseconds: 1000),
+        curve: Curves.easeInOutCubic,
+      );
+
+      setState(() {
+        _currentPageIndex = widget.initialPageIndex;
+      });
+
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _isResumingToInitialPosition = false;
+        }
+      });
+
+      if (targetOffset > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Resumed from page ${widget.initialPageIndex + 1}'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: const Color(0xFF6c5ce7),
+          ),
+        );
+      }
+
+      _hasScrolledToInitialPosition = true;
+    });
+  }
+}
+
+void _scrollListener() {
+  final offset = _scrollController.offset;
+  final maxExtent = _scrollController.position.maxScrollExtent;
+
+  double newScrollProgress;
+  if (maxExtent > 0) {
+    newScrollProgress = (offset / maxExtent).clamp(0.0, 1.0);
+    _showScrollToTop = offset > 1000;
+  } else {
+    newScrollProgress = 0.0;
+    _showScrollToTop = false;
+  }
+
+  if ((_scrollProgress - newScrollProgress).abs() > 0.001) {
+    setState(() {
+      _scrollProgress = newScrollProgress;
+    });
+  }
+
+  _handleAppBarVisibility();
+
+  if (offset >= maxExtent - 2000 && _shouldLoadNextChapter()) {
+    _loadNextChapter();
+  }
+/*
+  final now = DateTime.now();
+  if (_lastPageUpdateTime == null || 
+      now.difference(_lastPageUpdateTime!) > const Duration(milliseconds: 200)) {
+    _lastPageUpdateTime = now;
+    _updateCurrentPage(offset);
+    
+    if (_dividerPositions.length < _loadedChapters.fold(0, (sum, ch) => sum + ch.images.length)) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _calculateDividerPositions();
+      });
+    }
+    if (_chapterDividerHeights.length < _loadedChapters.length) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _calculateChapterDividerHeights();
+      });
     }
   }
+   */
+}
 
   void _handleAppBarVisibility() {
     final scrollDirection = _scrollController.position.userScrollDirection;
@@ -292,62 +386,115 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
     }
   }
 
-  void _updateCurrentPage(double offset) {
-    int currentChapter = startingChapterIndex;
-    final sortedOffsets = _chapterStartOffsets.entries.toList()
-      ..sort((a, b) => a.value.compareTo(b.value));
+void _updateCurrentPage(double offset) {
+  // Find the current chapter based on chapter start offsets
+  int currentChapter = startingChapterIndex;
+  final sortedOffsets = _chapterStartOffsets.entries.toList()
+    ..sort((a, b) => a.value.compareTo(b.value));
 
-    for (int i = 0; i < sortedOffsets.length; i++) {
-      final entry = sortedOffsets[i];
-      final nextEntry = i < sortedOffsets.length - 1 ? sortedOffsets[i + 1] : null;
+  for (int i = 0; i < sortedOffsets.length; i++) {
+    final entry = sortedOffsets[i];
+    final nextEntry = i < sortedOffsets.length - 1 ? sortedOffsets[i + 1] : null;
 
-      if (offset >= entry.value && (nextEntry == null || offset < nextEntry.value)) {
-        currentChapter = entry.key;
-        break;
-      }
-    }
-
-    final currentChapterData = _loadedChapters.firstWhere(
-      (c) => c.chapterIndex == currentChapter,
-      orElse: () => _loadedChapters.first,
-    );
-
-    final chapterStartOffset = _chapterStartOffsets[currentChapter] ?? 0;
-    final offsetInChapter = offset - chapterStartOffset;
-    
-    int detectedPageIndex = 0;
-    double cumulativeHeight = 0;
-    
-    for (int i = 0; i < currentChapterData.images.length; i++) {
-      final imageUrl = currentChapterData.images[i];
-      final imageHeight = currentChapterData.imageHeights[imageUrl] ?? 800.0;
-      
-      if (offsetInChapter < cumulativeHeight + imageHeight) {
-        detectedPageIndex = i;
-        break;
-      }
-      
-      cumulativeHeight += imageHeight;
-      
-      if (i < currentChapterData.images.length - 1) {
-        detectedPageIndex = i + 1;
-      }
-    }
-    
-    final clampedPageIndex = detectedPageIndex.clamp(0, currentChapterData.images.length - 1);
-    
-    if (clampedPageIndex != _currentPageIndex || currentChapter != _currentVisibleChapterIndex) {
-      setState(() {
-        _currentPageIndex = clampedPageIndex;
-        if (currentChapter != _currentVisibleChapterIndex) {
-          _currentVisibleChapterIndex = currentChapter;
-        }
-      });
-      
-      _scheduleProgressSave();
-      _checkChapterCompletion(offset, currentChapter, 0);
+    if (offset >= entry.value && (nextEntry == null || offset < nextEntry.value)) {
+      currentChapter = entry.key;
+      break;
     }
   }
+
+  final currentChapterData = _loadedChapters.firstWhere(
+    (c) => c.chapterIndex == currentChapter,
+    orElse: () => _loadedChapters.first,
+  );
+
+  final chapterStartOffset = _chapterStartOffsets[currentChapter] ?? 0;
+  final offsetInChapter = offset - chapterStartOffset;
+
+  // Calculate starting global image index for this chapter
+  final sortedChapters = _loadedChapters.toList()..sort((a, b) => a.chapterIndex.compareTo(b.chapterIndex));
+  int startGlobal = 0;
+  for (final ch in sortedChapters) {
+    if (ch.chapterIndex == currentChapter) break;
+    startGlobal += ch.images.length;
+  }
+
+  // Divider-based detection (primary if available)
+  int detectedPageIndex = 0;
+  final sortedDividers = _dividerPositions.entries
+      .where((entry) => entry.key >= startGlobal && entry.key < startGlobal + currentChapterData.images.length)
+      .toList()
+    ..sort((a, b) => a.value.compareTo(b.value));
+
+  if (sortedDividers.isNotEmpty) {
+    int passedCount = 0;
+    for (final entry in sortedDividers) {
+      final pos = entry.value;
+      if (offset >= pos) {
+        passedCount++;
+      } else {
+        break;
+      }
+    }
+    detectedPageIndex = passedCount;
+  } else {
+    // Height-based fallback with 50% threshold for earlier updates
+    double cumulativeHeight = 0.0;
+    final int length = currentChapterData.images.length;
+    bool found = false;
+    for (int i = 0; i < length; i++) {
+      final double imageHeight = currentChapterData.imageHeights[currentChapterData.images[i]] ?? 800.0;
+      if (offsetInChapter < cumulativeHeight + imageHeight) {
+        if (offsetInChapter > cumulativeHeight + imageHeight * 0.5) {
+          detectedPageIndex = i + 1;
+        } else {
+          detectedPageIndex = i;
+        }
+        found = true;
+        break;
+      }
+      cumulativeHeight += imageHeight;
+    }
+    if (!found) {
+      detectedPageIndex = length > 0 ? length - 1 : 0;
+    }
+  }
+
+  // Use max with height-based if dividers were used
+  if (sortedDividers.isNotEmpty) {
+    // Calculate height-based for comparison
+    double cumulativeHeightCheck = 0.0;
+    int heightDetected = 0;
+    for (int i = 0; i < currentChapterData.images.length; i++) {
+      final double imageHeight = currentChapterData.imageHeights[currentChapterData.images[i]] ?? 800.0;
+      if (offsetInChapter < cumulativeHeightCheck + imageHeight) {
+        if (offsetInChapter > cumulativeHeightCheck + imageHeight * 0.5) {
+          heightDetected = i + 1;
+        } else {
+          heightDetected = i;
+        }
+        break;
+      }
+      cumulativeHeightCheck += imageHeight;
+      heightDetected = i + 1;
+    }
+    detectedPageIndex = max(detectedPageIndex, heightDetected);
+  }
+
+  final clampedPageIndex = detectedPageIndex.clamp(0, currentChapterData.images.length - 1);
+
+  if (clampedPageIndex != _currentPageIndex || currentChapter != _currentVisibleChapterIndex) {
+    setState(() {
+      _currentPageIndex = clampedPageIndex;
+      if (currentChapter != _currentVisibleChapterIndex) {
+        _currentVisibleChapterIndex = currentChapter;
+        _currentPageIndex = 0; // Reset on chapter change
+      }
+      print('Page updated: Chapter $_currentVisibleChapterIndex, Page ${_currentPageIndex + 1}');
+    });
+    _scheduleProgressSave();
+    _checkChapterCompletion(offset, currentChapter, chapterStartOffset);
+  }
+}
 
   // =============================================================================
   // CHAPTER LOADING AND MANAGEMENT
@@ -724,7 +871,39 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
       }
     });
   }
+void _calculateChapterDividerHeights() {
+  if (!mounted) return;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    bool needsUpdate = false;
+    for (final entry in _chapterDividerKeys.entries) {
+      final key = entry.value;
+      if (key.currentContext != null) {
+        final renderBox = key.currentContext!.findRenderObject() as RenderBox?;
+        if (renderBox != null && renderBox.hasSize) {
+          final newHeight = renderBox.size.height;
+          if (_chapterDividerHeights[entry.key] != newHeight) {
+            _chapterDividerHeights[entry.key] = newHeight;
+            needsUpdate = true;
+          }
+        }
+      }
+    }
 
+    if (needsUpdate) {
+      setState(() {
+        for (int i = 0; i < _loadedChapters.length; i++) {
+          final chapter = _loadedChapters[i];
+          final dividerHeight = _chapterDividerHeights[chapter.chapterIndex] ?? 100.0;
+          final imageSum = chapter.imageHeights.values.fold(0.0, (sum, h) => sum + h);
+          _loadedChapters[i] = chapter.copyWith(
+            chapterHeight: imageSum + dividerHeight,
+          );
+        }
+      });
+      _calculateChapterOffsets();
+    }
+  });
+}
   void _checkChapterCompletion(double currentOffset, int chapterIndex, double chapterStartOffset) {
     final chapter = _loadedChapters.firstWhere(
       (c) => c.chapterIndex == chapterIndex,
@@ -740,6 +919,7 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
     
     bool shouldComplete = false;
     
+    // Complete when reaching last page or second-to-last page
     if (currentPage >= totalImages) {
       shouldComplete = true;
     } else if (currentPage >= totalImages - 1 && totalImages > 1) {
@@ -760,36 +940,41 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   // UTILITY METHODS
   // =============================================================================
 
-  void _calculateDividerPositions() {
-    if (_isCalculatingDividers) return;
+Timer? _dividerCalculationTimer;
+
+void _calculateDividerPositions() {
+  if (_isCalculatingDividers) return;
+  _dividerCalculationTimer?.cancel();
+  _dividerCalculationTimer = Timer(const Duration(milliseconds: 300), () {
+    if (!mounted) return;
     _isCalculatingDividers = true;
-    
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         _dividerPositions.clear();
-        
         int globalImageIndex = 0;
         for (final chapter in _loadedChapters) {
           for (int imageIndex = 0; imageIndex < chapter.images.length; imageIndex++) {
             final key = _imageDividerKeys[globalImageIndex];
             if (key?.currentContext != null) {
-              final RenderBox? renderBox = key!.currentContext!.findRenderObject() as RenderBox?;
-              if (renderBox != null) {
+              final RenderBox? renderBox = key?.currentContext!.findRenderObject() as RenderBox?;
+              if (renderBox != null && renderBox.hasSize) {
                 final position = renderBox.localToGlobal(Offset.zero);
-                final scrollPosition = position.dy + _scrollController.offset - MediaQuery.of(context).padding.top;
+                final scrollPosition = _scrollController.offset + position.dy - MediaQuery.of(context).padding.top;
                 _dividerPositions[globalImageIndex] = scrollPosition;
+                print('Divider $globalImageIndex position: $scrollPosition');
               }
             }
             globalImageIndex++;
           }
         }
       } catch (e) {
-        // Silently handle calculation errors
+        print('Divider position calculation error: $e');
       } finally {
         _isCalculatingDividers = false;
       }
     });
-  }
+  });
+}
 
   void _calculateChapterOffsets() {
     double cumulativeOffset = 0;
@@ -869,17 +1054,26 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   void _jumpToChapter(int index) {
     Navigator.pop(context);
     
-    _calculateChapterOffsets();
-    final targetOffset = _chapterStartOffsets[index] ?? 0;
-    
     if (_loadedChapters.any((ch) => ch.chapterIndex == index)) {
       setState(() => _currentVisibleChapterIndex = index);
+      
+      // Calculate approximate scroll position for chapter start
+      double targetOffset = 0;
+      for (final chapter in _loadedChapters) {
+        if (chapter.chapterIndex == index) {
+          break;
+        }
+        // Add estimated height for each chapter before target
+        targetOffset += (chapter.images.length * 800.0) + 100.0; // 800px per image + 100px for divider
+      }
+      
       _scrollController.animateTo(
         targetOffset, 
         duration: const Duration(milliseconds: 800), 
         curve: Curves.easeInOut,
       );
     } else {
+      // Chapter not loaded, create new chapter and jump to top
       _preloadedImages.clear();
       final newChapter = _LoadedChapter(
         chapterIndex: index,
@@ -902,148 +1096,102 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
   // UI BUILDING METHODS
   // =============================================================================
 
-  Widget _buildEnhancedProgressBar() {
-    if (!_scrollController.hasClients) {
-      return const SizedBox.shrink();
-    }
-    
-    final currentOffset = _scrollController.offset;
-    
-    _LoadedChapter? actualCurrentChapter;
-    int actualChapterIndex = 0;
-    double actualChapterStartOffset = 0;
-    
-    final sortedOffsets = _chapterStartOffsets.entries.toList()
-      ..sort((a, b) => a.value.compareTo(b.value));
-    
-    for (int i = 0; i < sortedOffsets.length; i++) {
-      final entry = sortedOffsets[i];
-      final nextEntry = i < sortedOffsets.length - 1 ? sortedOffsets[i + 1] : null;
-      
-      if (currentOffset >= entry.value && (nextEntry == null || currentOffset < nextEntry.value)) {
-        actualChapterIndex = entry.key;
-        actualChapterStartOffset = entry.value;
-        actualCurrentChapter = _loadedChapters.firstWhere(
-          (c) => c.chapterIndex == actualChapterIndex,
-          orElse: () => _loadedChapters.first,
-        );
-        break;
-      }
-    }
-    
-    if (actualCurrentChapter == null) {
-      actualCurrentChapter = _loadedChapters.first;
-      actualChapterIndex = actualCurrentChapter.chapterIndex;
-      actualChapterStartOffset = _chapterStartOffsets[actualChapterIndex] ?? 0;
-    }
-    
-    final currentChapter = widget.allChapters[actualChapterIndex];
-    final totalPagesInChapter = actualCurrentChapter.images.length;
-    
-    int localPageIndex = 0;
-    final offsetInChapter = currentOffset - actualChapterStartOffset;
-    
-    if (actualCurrentChapter.imageHeights.isNotEmpty && offsetInChapter >= 0) {
-      double cumulativeHeight = 0;
-      for (int i = 0; i < actualCurrentChapter.images.length; i++) {
-        final imageUrl = actualCurrentChapter.images[i];
-        final imageHeight = actualCurrentChapter.imageHeights[imageUrl] ?? 800.0;
-        
-        if (offsetInChapter < cumulativeHeight + imageHeight) {
-          localPageIndex = i;
-          break;
-        }
-        cumulativeHeight += imageHeight;
-        localPageIndex = i;
-      }
-    }
-    
-    localPageIndex = localPageIndex.clamp(0, totalPagesInChapter - 1);
-    final currentPageInChapter = localPageIndex + 1;
-    
-    final chapterProgress = totalPagesInChapter > 0 
-        ? (currentPageInChapter / totalPagesInChapter).clamp(0.0, 1.0)
-        : 0.0;
-    
-    return Positioned(
-      bottom: MediaQuery.of(context).padding.bottom,
-      left: 0,
-      right: 0,
-      child: Container(
-        height: 32,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [
-              Colors.black.withOpacity(0.8),
-              Colors.black.withOpacity(0.4),
-              Colors.transparent,
-            ],
-          ),
-        ),
-        child: Column(
-          children: [
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Ch.${currentChapter.number} - Page $currentPageInChapter of $totalPagesInChapter',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          shadows: [
-                            Shadow(
-                              offset: Offset(0, 1),
-                              blurRadius: 3,
-                              color: Colors.black87,
-                            ),
-                          ],
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF6c5ce7).withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${(chapterProgress * 100).round()}%',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Container(
-              height: 4,
-              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: chapterProgress,
-                  backgroundColor: Colors.white.withOpacity(0.3),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6c5ce7)),
-                ),
-              ),
-            ),
+Widget _buildEnhancedProgressBar() {
+  if (!_scrollController.hasClients) {
+    return const SizedBox.shrink();
+  }
+
+  final currentChapterData = _loadedChapters.firstWhere(
+    (c) => c.chapterIndex == _currentVisibleChapterIndex,
+    orElse: () => _loadedChapters.first,
+  );
+  final currentChapter = widget.allChapters[_currentVisibleChapterIndex];
+  final totalPagesInChapter = currentChapterData.images.length;
+  final currentPageInChapter = (_currentPageIndex + 1).clamp(1, totalPagesInChapter);
+
+  final chapterProgress = totalPagesInChapter > 0
+      ? (currentPageInChapter / totalPagesInChapter).clamp(0.0, 1.0)
+      : 0.0;
+
+  return Positioned(
+    bottom: MediaQuery.of(context).padding.bottom,
+    left: 0,
+    right: 0,
+    child: Container(
+      height: 32,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Colors.black.withOpacity(0.8),
+            Colors.black.withOpacity(0.4),
+            Colors.transparent,
           ],
         ),
       ),
-    );
-  }
+      child: Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: Text(
+                      'Ch.${currentChapter.number} - Page $currentPageInChapter of $totalPagesInChapter',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        shadows: [
+                          Shadow(
+                            offset: Offset(0, 1),
+                            blurRadius: 3,
+                            color: Colors.black87,
+                          ),
+                        ],
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6c5ce7).withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${(chapterProgress * 100).round()}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            height: 4,
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: chapterProgress,
+                backgroundColor: Colors.white.withOpacity(0.3),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6c5ce7)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
   Widget _buildFloatingActionButtons() {
     return AnimatedBuilder(
@@ -1268,61 +1416,83 @@ class _ReaderScreenState extends State<ReaderScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _buildPageDivider(int imageIndex) {
-    return Container(
-      key: _imageDividerKeys[imageIndex],
-      height: 1,
-      width: double.infinity,
-      color: Colors.transparent,
-      child: const SizedBox.shrink(),
-    );
-  }
-
-  Widget _buildItem(BuildContext context, int index) {
-    int currentIndex = 0;
-    int globalImageIndex = 0;
-    
-    for (final chapter in _loadedChapters) {
-      for (int imageIndex = 0; imageIndex < chapter.images.length; imageIndex++) {
-        if (index == currentIndex + imageIndex) {
-          final url = chapter.images[imageIndex];
-          final state = chapter.imageLoadingStates[url] ?? ImageLoadingState.waiting;
-          
-          if (!_imageDividerKeys.containsKey(globalImageIndex)) {
-            _imageDividerKeys[globalImageIndex] = GlobalKey();
-          }
-          
-          return Stack(
-            children: [
-              Hero(
-                tag: 'image_${chapter.chapterIndex}_$imageIndex',
-                child: _buildImage(url, state, globalImageIndex),
-              ),
-              Positioned(
-                top: 0,
-                left: 0,
-                child: Container(
-                  key: _imageDividerKeys[globalImageIndex],
-                  height: 0,
-                  width: 1,
-                  color: Colors.transparent,
-                ),
-              ),
-            ],
-          );
+Widget _buildPageDivider(int globalImageIndex, int imageIndex, int chapterIndex) {
+  return _DividerWidget(
+    key: _imageDividerKeys[globalImageIndex],
+    imageIndex: imageIndex,
+    chapterIndex: chapterIndex,
+    onPassed: () {
+      if (mounted) {
+        final currentScroll = _scrollController.offset;
+        final lastScroll = _lastScrollPosition ?? 0;
+        
+        int newPageIndex;
+        if (currentScroll > lastScroll) {
+          newPageIndex = imageIndex + 1;
+        } else {
+          newPageIndex = imageIndex;
         }
-        globalImageIndex++;
+        
+        final chapterData = _loadedChapters.firstWhere(
+          (c) => c.chapterIndex == chapterIndex,
+          orElse: () => _loadedChapters.first,
+        );
+        newPageIndex = newPageIndex.clamp(0, chapterData.images.length - 1);
+        
+        print('BEFORE setState: _currentPageIndex = $_currentPageIndex');
+        print('DIVIDER CALLBACK: Setting to newPageIndex = $newPageIndex (display: ${newPageIndex + 1})');
+        
+        setState(() {
+          _currentPageIndex = newPageIndex;
+          _currentVisibleChapterIndex = chapterIndex;
+        });
+        
+        print('AFTER setState: _currentPageIndex = $_currentPageIndex');
+        
+        _scheduleProgressSave();
+        _checkChapterCompletion(currentScroll, chapterIndex, 0);
       }
-      
-      currentIndex += chapter.images.length;
-      
-      if (index == currentIndex) {
-        currentIndex++;
-        return _buildChapterDivider(chapter);
+    },
+  );
+}
+
+Widget _buildItem(BuildContext context, int index) {
+  int currentIndex = 0;
+  int globalImageIndex = 0;
+
+  for (final chapter in _loadedChapters) {
+    for (int imageIndex = 0; imageIndex < chapter.images.length; imageIndex++) {
+      if (index == currentIndex + imageIndex) {
+        final url = chapter.images[imageIndex];
+        final state = chapter.imageLoadingStates[url] ?? ImageLoadingState.waiting;
+
+        if (!_imageDividerKeys.containsKey(globalImageIndex)) {
+          _imageDividerKeys[globalImageIndex] = GlobalKey();
+        }
+
+        return Column(
+          children: [
+            Hero(
+              tag: 'image_${chapter.chapterIndex}_$imageIndex',
+              child: _buildImage(url, state, globalImageIndex),
+            ),
+            _buildPageDivider(globalImageIndex, imageIndex, chapter.chapterIndex),
+          ],
+        );
       }
+      globalImageIndex++;
     }
-    return const SizedBox.shrink();
+
+    currentIndex += chapter.images.length;
+
+    if (index == currentIndex) {
+      return _buildChapterDivider(chapter);
+    }
+
+    currentIndex++;
   }
+  return const SizedBox.shrink();
+}
 
   Widget _buildImage(String url, ImageLoadingState state, int imageIndex) {
     final constrainedWidth = MediaQuery.of(context).size.width * 0.7;

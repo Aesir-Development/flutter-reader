@@ -627,6 +627,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
       ),
       child: ListTile(
         onTap: () => _navigateToReader(chapter.number),
+        onLongPress: () => _showChapterOptions(chapter, isCompleted),
         leading: Container(
           width: 40,
           height: 40,
@@ -685,19 +686,151 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
                 fontSize: 12,
               ),
             ),
+            if (isCompleted) ...[
+              const SizedBox(width: 8),
+              Text(
+                '• Read',
+                style: TextStyle(
+                  color: const Color(0xFF6c5ce7),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isCompleted)
-              const Icon(Icons.check_circle, color: Color(0xFF6c5ce7), size: 20),
+            // Quick toggle button
+            GestureDetector(
+              onTap: () => _toggleChapterReadStatus(chapter, isCompleted),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                child: Icon(
+                  isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: isCompleted ? const Color(0xFF6c5ce7) : Colors.grey[400],
+                  size: 20,
+                ),
+              ),
+            ),
             const SizedBox(width: 8),
             const Icon(Icons.chevron_right, color: Colors.grey),
           ],
         ),
       ),
     );
+  }
+
+  void _showChapterOptions(Chapter chapter, bool isCompleted) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF2a2a2a),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Chapter ${chapter.number}: ${chapter.title}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: const Icon(Icons.play_arrow, color: Color(0xFF6c5ce7)),
+                title: const Text('Read Chapter', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _navigateToReader(chapter.number);
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  isCompleted ? Icons.remove_circle : Icons.check_circle,
+                  color: isCompleted ? Colors.orange : Colors.green,
+                ),
+                title: Text(
+                  isCompleted ? 'Mark as Unread' : 'Mark as Read',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _toggleChapterReadStatus(chapter, isCompleted);
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _toggleChapterReadStatus(Chapter chapter, bool isCurrentlyCompleted) async {
+    if (manhwa == null) return;
+    
+    try {
+      if (isCurrentlyCompleted) {
+        // Unmark as completed and sync immediately
+        await ProgressService.unmarkCompleted(
+          manhwa!.id.toString(),
+          chapter.number,
+          syncImmediately: true, // Trigger immediate API sync
+        );
+        setState(() {
+          _completedChapters.remove(chapter.number);
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Chapter ${chapter.number} marked as unread'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else {
+        // Mark as completed and sync immediately
+        await ProgressService.markCompleted(
+          manhwa!.id.toString(),
+          chapter.number,
+          syncImmediately: true, // Trigger immediate API sync
+        );
+        setState(() {
+          _completedChapters.add(chapter.number);
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Chapter ${chapter.number} marked as read'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      
+      // Update continue chapter after status change
+      _continueChapter = await ProgressService.getContinueChapter(
+        manhwa!.id.toString(), 
+        manhwa!.chapters.map((c) => c.number).toList()
+      );
+      
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to update chapter status: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _navigateToReader(double chapterNumber) async {

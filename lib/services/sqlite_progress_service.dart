@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
@@ -59,25 +58,27 @@ class SQLiteProgressService {
       },
     );
   }
-static Future<T> _executeWithRetry<T>(Future<T> Function() operation, {int maxRetries = 3}) async {
-  int attempts = 0;
-  
-  while (attempts < maxRetries) {
-    try {
-      return await operation();
-    } catch (e) {
-      attempts++;
-      if (e.toString().contains('database is locked') && attempts < maxRetries) {
-        print('Database locked, retrying... (attempt $attempts/$maxRetries)');
-        await Future.delayed(Duration(milliseconds: 100 * attempts)); // Exponential backoff
-        continue;
+
+  static Future<T> _executeWithRetry<T>(Future<T> Function() operation, {int maxRetries = 3}) async {
+    int attempts = 0;
+    
+    while (attempts < maxRetries) {
+      try {
+        return await operation();
+      } catch (e) {
+        attempts++;
+        if (e.toString().contains('database is locked') && attempts < maxRetries) {
+          print('Database locked, retrying... (attempt $attempts/$maxRetries)');
+          await Future.delayed(Duration(milliseconds: 100 * attempts)); // Exponential backoff
+          continue;
+        }
+        rethrow; // If not a lock error or max retries reached
       }
-      rethrow; // If not a lock error or max retries reached
     }
+    
+    throw Exception('Max retries exceeded');
   }
-  
-  throw Exception('Max retries exceeded');
-}
+
   static Future<void> _createTables(Database db) async {
     // Create manhwas table
     await db.execute('''
@@ -99,22 +100,21 @@ static Future<T> _executeWithRetry<T>(Future<T> Function() operation, {int maxRe
     // Create chapters table with progress columns
     await db.execute('''
       CREATE TABLE IF NOT EXISTS chapters (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  manhwa_id TEXT NOT NULL,
-  number REAL NOT NULL,
-  title TEXT NOT NULL,
-  release_date TEXT NOT NULL,
-  is_read BOOLEAN DEFAULT FALSE,
-  is_downloaded BOOLEAN DEFAULT FALSE,
-  images TEXT,
-  current_page INTEGER DEFAULT 0,
-  scroll_position REAL DEFAULT 0.0,
-  last_read_at TIMESTAMP,
-  reading_time_seconds INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
-  UNIQUE(manhwa_id, number)
-);
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        manhwa_id TEXT NOT NULL,
+        number REAL NOT NULL,
+        title TEXT NOT NULL,
+        release_date TEXT NOT NULL,
+        is_read BOOLEAN DEFAULT FALSE,
+        is_downloaded BOOLEAN DEFAULT FALSE,
+        images TEXT,
+        current_page INTEGER DEFAULT 0,
+        scroll_position REAL DEFAULT 0.0,
+        last_read_at TIMESTAMP,
+        reading_time_seconds INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
+        UNIQUE(manhwa_id, number)
       )
     ''');
 
@@ -153,75 +153,76 @@ static Future<T> _executeWithRetry<T>(Future<T> Function() operation, {int maxRe
   }
 
   // Save reading position for a chapter
-static Future<void> saveProgress(
-  String manhwaId, 
-  double chapterNumber, 
-  int pageIndex, 
-  double scrollPosition,
-  {bool markAsRead = false}
-) async {
-  await _executeWithRetry(() async {
-    final db = await database;
+  static Future<void> saveProgress(
+    String manhwaId, 
+    double chapterNumber, 
+    int pageIndex, 
+    double scrollPosition,
+    {bool markAsRead = false}
+  ) async {
+    await _executeWithRetry(() async {
+      final db = await database;
+      
+      final updateData = {
+        'current_page': pageIndex,
+        'scroll_position': scrollPosition,
+        'last_read_at': DateTime.now().toIso8601String(),
+      };
+      
+      if (markAsRead) {
+        updateData['is_read'] = 1;
+      }
+      
+      await db.update(
+        'chapters',
+        updateData,
+        where: 'manhwa_id = ? AND number = ?',
+        whereArgs: [manhwaId, chapterNumber],
+      );
+    });
     
-    final updateData = {
-      'current_page': pageIndex,
-      'scroll_position': scrollPosition,
-      'last_read_at': DateTime.now().toIso8601String(),
-    };
-    
-    if (markAsRead) {
-      updateData['is_read'] = 1;
-    }
-    
-    await db.update(
-      'chapters',
-      updateData,
-      where: 'manhwa_id = ? AND number = ?',
-      whereArgs: [manhwaId, chapterNumber],
-    );
-  });
     _updateCache(manhwaId, chapterNumber, {
-    'pageIndex': pageIndex,
-    'scrollPosition': scrollPosition,
-    'lastRead': DateTime.now().toIso8601String(),
-    'isRead': markAsRead,
-  });
-}
+      'pageIndex': pageIndex,
+      'scrollPosition': scrollPosition,
+      'lastRead': DateTime.now().toIso8601String(),
+      'isRead': markAsRead,
+    });
+  }
 
   // Get reading position for a chapter
-static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
-  // Clear cache to ensure fresh data
-  _cache.remove(manhwaId);
-  print('Cleared cache for manhwaId=$manhwaId');
+  static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
+    // Clear cache to ensure fresh data
+    _cache.remove(manhwaId);
+    print('Cleared cache for manhwaId=$manhwaId');
 
-  final db = await database;
-  final results = await db.query(
-    'chapters',
-    columns: ['current_page', 'scroll_position', 'last_read_at', 'is_read'],
-    where: 'manhwa_id = ? AND number = ?',
-    whereArgs: [manhwaId, chapterNumber],
-    limit: 1,
-  );
+    final db = await database;
+    final results = await db.query(
+      'chapters',
+      columns: ['current_page', 'scroll_position', 'last_read_at', 'is_read'],
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+      limit: 1,
+    );
 
-  if (results.isNotEmpty) {
-    final result = results.first;
-    final progress = {
-      'pageIndex': (result['current_page'] as num).toInt(),
-      'scrollPosition': (result['scroll_position'] as num).toDouble(),
-      'lastRead': result['last_read_at'] as String?,
-      'isRead': (result['is_read'] as int) == 1,
-    };
+    if (results.isNotEmpty) {
+      final result = results.first;
+      final progress = {
+        'pageIndex': (result['current_page'] as num).toInt(),
+        'scrollPosition': (result['scroll_position'] as num).toDouble(),
+        'lastRead': result['last_read_at'] as String?,
+        'isRead': (result['is_read'] as int) == 1,
+      };
+      
+      print('SQLiteProgressService.getProgress: Retrieved for manhwaId=$manhwaId, chapter=$chapterNumber: $progress');
+      
+      // Cache the result
+      _updateCache(manhwaId, chapterNumber, progress);
+      return progress;
+    }
     
-    print('SQLiteProgressService.getProgress: Retrieved for manhwaId=$manhwaId, chapter=$chapterNumber: $progress');
-    
-    // Cache the result
-    _updateCache(manhwaId, chapterNumber, progress);
-    return progress;
+    print('SQLiteProgressService.getProgress: No progress found for manhwaId=$manhwaId, chapter=$chapterNumber');
+    return null;
   }
-  
-  print('SQLiteProgressService.getProgress: No progress found for manhwaId=$manhwaId, chapter=$chapterNumber');
-  return null;
-}
 
   // Mark chapter as completed
   static Future<void> markCompleted(String manhwaId, double chapterNumber) async {
@@ -240,6 +241,24 @@ static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapter
     // Invalidate cache for this manhwa
     _cache.remove(manhwaId);
   } 
+
+  // Unmark chapter as completed
+  static Future<void> unmarkCompleted(String manhwaId, double chapterNumber) async {
+    final db = await database;
+    
+    await db.update(
+      'chapters',
+      {
+        'is_read': 0,
+        'last_read_at': DateTime.now().toIso8601String(),
+      },
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
+  }
 
   // Check if chapter is completed
   static Future<bool> isCompleted(String manhwaId, double chapterNumber) async {
@@ -372,13 +391,13 @@ static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapter
     final progress = <String, dynamic>{};
     final completed = <double>[];
 
-for (final row in results) {
-  final chapterNumber = (row['number'] as num).toDouble();
-  
-  if ((row['is_read'] as int) == 1) {
-    completed.add(chapterNumber);
-  }
-     
+    for (final row in results) {
+      final chapterNumber = (row['number'] as num).toDouble();
+      
+      if ((row['is_read'] as int) == 1) {
+        completed.add(chapterNumber);
+      }
+      
       if ((row['current_page'] as int) > 0 || (row['scroll_position'] as double) > 0.0) {
         final cacheKey = '${manhwaId}_$chapterNumber';
         progress[cacheKey] = {
@@ -452,16 +471,16 @@ for (final row in results) {
   // ===== APP SETTINGS METHODS =====
   
   // Save a setting (auth tokens, preferences, etc.)
-static Future<void> saveSetting(String key, String value) async {
-  await _executeWithRetry(() async {
-    final db = await database;
-    await db.rawInsert(
-      'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
-      [key, value]
-    );
-  });
-  print('Setting saved: $key');
-}
+  static Future<void> saveSetting(String key, String value) async {
+    await _executeWithRetry(() async {
+      final db = await database;
+      await db.rawInsert(
+        'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
+        [key, value]
+      );
+    });
+    print('Setting saved: $key');
+  }
 
   // Get a setting by key
   static Future<String?> getSetting(String key) async {
@@ -482,17 +501,17 @@ static Future<void> saveSetting(String key, String value) async {
   }
 
   // Delete a setting by key
-static Future<void> deleteSetting(String key) async {
-  await _executeWithRetry(() async {
-    final db = await database;
-    final deletedRows = await db.delete(
-      'app_settings',
-      where: 'key = ?',
-      whereArgs: [key],
-    );
-    print('Setting deleted: $key ($deletedRows rows affected)');
-  });
-}
+  static Future<void> deleteSetting(String key) async {
+    await _executeWithRetry(() async {
+      final db = await database;
+      final deletedRows = await db.delete(
+        'app_settings',
+        where: 'key = ?',
+        whereArgs: [key],
+      );
+      print('Setting deleted: $key ($deletedRows rows affected)');
+    });
+  }
 
   // Get all settings
   static Future<Map<String, String>> getAllSettings() async {
