@@ -57,7 +57,6 @@ class PluginService {
           }
 
           tmp_plugin = new ${entry.key}();
-          console.log("test");
           pluginMap["${entry.key}"] = tmp_plugin;
           """);
         if (err?.isError == true) {
@@ -78,8 +77,9 @@ class PluginService {
 
     var res = await jsRuntime?.evaluateAsync("""
           async function test() {
+
             let flame = pluginMap["flamecomics"];
-            return flame.get_chapter_list(2);
+            return flame.plugin_details();
           }
           test();
           """, sourceUrl: "plugins.js");

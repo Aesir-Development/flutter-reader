@@ -16,8 +16,10 @@ class flamecomics {
     const res = await fetch("https://flamecomics.xyz/");
     const data = await res.text();
     const { document } = parseHTML(data);
+
     let nextData = document.querySelector("script#__NEXT_DATA__")?.textContent;
-    // console.log("NEXT DATA:", nextData)
+    console.log("NEXT DATA:", nextData);
+
     return nextData ? JSON.parse(nextData).buildId : "";
   }
 
