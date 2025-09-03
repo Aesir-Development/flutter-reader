@@ -76,3 +76,13 @@ function filter_search(results, query, limit) {
 
   return filtered;
 }
+
+/**
+ * This function parses JSON using native dart functions.
+ * This just provides a standard way to do it.
+ * @param {string} jsonString
+ */
+function parseJSONSafe(jsonString) {
+  let res = sendMessage("test", JSON.stringify({ jsonString: jsonString }));
+  return res;
+}
