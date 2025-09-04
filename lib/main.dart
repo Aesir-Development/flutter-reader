@@ -10,7 +10,7 @@ void main() async {
   
   // Initialize services
   await initializeApp();
-    await SQLiteProgressService.addDummyData();
+    //await SQLiteProgressService.addDummyData();
   runApp(MyApp());
 }
 

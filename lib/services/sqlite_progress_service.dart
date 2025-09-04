@@ -147,6 +147,7 @@ class SQLiteProgressService {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_manhwa_chapters ON chapters(manhwa_id, number)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_chapter_read_status ON chapters(manhwa_id, is_read)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_last_read ON chapters(manhwa_id, last_read_at DESC)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_chapter_downloaded ON chapters(manhwa_id, is_downloaded)');
     } catch (e) {
       print('Indexes may already exist: $e');
     }
@@ -260,6 +261,67 @@ class SQLiteProgressService {
     _cache.remove(manhwaId);
   }
 
+  // Mark chapter as downloaded
+static Future<void> markDownloaded(String manhwaId, double chapterNumber) async {
+  print('=== markDownloaded DEBUG ===');
+  print('Marking manhwa_id: "$manhwaId", chapter: $chapterNumber as downloaded');
+  
+  final db = await database;
+  
+  // Check if the chapter exists first
+  final existingChapter = await db.query(
+    'chapters',
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+  );
+  
+  print('Existing chapter found: ${existingChapter.length}');
+  if (existingChapter.isNotEmpty) {
+    print('Chapter details: ${existingChapter.first}');
+  }
+  
+  final updatedRows = await db.update(
+    'chapters',
+    {'is_downloaded': 1},
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+  );
+
+  print('Updated rows: $updatedRows');
+  
+  // Verify the update
+  final verifyUpdate = await db.query(
+    'chapters',
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+  );
+  
+  if (verifyUpdate.isNotEmpty) {
+    print('Verification - is_downloaded: ${verifyUpdate.first['is_downloaded']}');
+  } else {
+    print('ERROR: Chapter not found after update!');
+  }
+  
+  // Invalidate cache for this manhwa
+  _cache.remove(manhwaId);
+  print('=== END markDownloaded DEBUG ===');
+}
+
+  // Unmark chapter as downloaded
+  static Future<void> unmarkDownloaded(String manhwaId, double chapterNumber) async {
+    final db = await database;
+    
+    await db.update(
+      'chapters',
+      {'is_downloaded': 0},
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
+  }
+
   // Check if chapter is completed
   static Future<bool> isCompleted(String manhwaId, double chapterNumber) async {
     final db = await database;
@@ -285,6 +347,71 @@ class SQLiteProgressService {
     );
 
     return results.map((row) => (row['number'] as num).toDouble()).toSet();
+  }
+
+  // Get list of downloaded chapters for a manhwa
+static Future<Set<double>> getDownloadedChapters(String manhwaId) async {
+  print('=== getDownloadedChapters DEBUG ===');
+  print('Querying for manhwaId: "$manhwaId"');
+  
+  final db = await database;
+  
+  // First, let's see what's actually in the database
+  final allChapters = await db.query('chapters');
+  print('Total chapters in database: ${allChapters.length}');
+  
+  // Show all manhwa_ids in database
+  final allManhwaIds = await db.rawQuery('SELECT DISTINCT manhwa_id FROM chapters');
+  print('All manhwa_ids in database: ${allManhwaIds.map((row) => row['manhwa_id']).toList()}');
+  
+  // Show downloaded chapters for all manhwas
+  final allDownloaded = await db.query(
+    'chapters',
+    columns: ['manhwa_id', 'number', 'is_downloaded'],
+    where: 'is_downloaded = 1',
+  );
+  print('All downloaded chapters: ${allDownloaded.length}');
+  for (var row in allDownloaded) {
+    print('- manhwa_id: "${row['manhwa_id']}", chapter: ${row['number']}, downloaded: ${row['is_downloaded']}');
+  }
+  
+  // Now try the actual query
+  final results = await db.query(
+    'chapters',
+    columns: ['number'],
+    where: 'manhwa_id = ? AND is_downloaded = 1',
+    whereArgs: [manhwaId],
+  );
+  
+  print('Query results for manhwa_id "$manhwaId": ${results.length} chapters');
+  for (var row in results) {
+    print('- Chapter: ${row['number']}');
+  }
+
+  final downloadedChapters = results.map((row) => (row['number'] as num).toDouble()).toSet();
+  print('Returning: $downloadedChapters');
+  print('=== END getDownloadedChapters DEBUG ===');
+  
+  return downloadedChapters;
+}
+
+
+  // Get all downloaded chapters across all manhwa
+  static Future<List<Map<String, dynamic>>> getAllDownloadedChapters() async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT m.name as manhwaName, c.number as chapterNumber, c.manhwa_id as manhwaId
+      FROM chapters c
+      JOIN manhwas m ON c.manhwa_id = m.id
+      WHERE c.is_downloaded = 1
+      ORDER BY m.name ASC, c.number ASC
+    ''');
+    
+    return results.map((row) => {
+      'manhwaName': row['manhwaName'] as String,
+      'chapterNumber': (row['chapterNumber'] as num).toDouble(), // Cast to double
+      'manhwaId': row['manhwaId'] as String,
+    }).toList();
   }
 
   // Find best chapter to continue from

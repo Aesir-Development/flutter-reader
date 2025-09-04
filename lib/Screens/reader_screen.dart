@@ -8,6 +8,8 @@ import '../services/api_service.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 
 enum ImageLoadingState { waiting, loading, loaded, error }
 
@@ -522,56 +524,97 @@ void _updateCurrentPage(double offset) {
     }
   }
 
-  void _loadFullChapter(_LoadedChapter chapter) async {
-    final imageLoadingStates = {for (var url in chapter.images) url: ImageLoadingState.loading};
-    final imageHeights = Map<String, double>.from(chapter.imageHeights);
-    _updateChapterImageStates(chapter.chapterIndex, imageLoadingStates);
+void _loadFullChapter(_LoadedChapter chapter) async {
+  // First, check for offline images and replace URLs
+  final offlineImagePaths = await OfflineImageLoader.getChapterImagePaths(
+    _manhwaId!,
+    chapter.chapter.number,
+    chapter.images,
+  );
+  
+  // Update the chapter with offline paths where available
+  final chapterIndex = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
+  if (chapterIndex != -1 && mounted) {
+    setState(() {
+      _loadedChapters[chapterIndex] = _LoadedChapter(
+        chapterIndex: chapter.chapterIndex,
+        chapter: chapter.chapter,
+        images: offlineImagePaths, // Use offline paths where available
+        imageLoadingStates: chapter.imageLoadingStates,
+        imageHeights: chapter.imageHeights,
+        isFullyLoaded: chapter.isFullyLoaded,
+        chapterHeight: chapter.chapterHeight,
+      );
+    });
+  }
 
-    final constrainedWidth = MediaQuery.of(context).size.width * 0.7;
-    
-    for (int i = 0; i < chapter.images.length; i++) {
-      final url = chapter.images[i];
-      if (!imageHeights.containsKey(url)) {
-        double estimatedHeight;
-        if (i == 0) {
-          estimatedHeight = constrainedWidth * 0.3;
-        } else if (i < 3) {
-          estimatedHeight = constrainedWidth * 1.4;
-        } else {
-          estimatedHeight = constrainedWidth * 1.6;
-        }
-        imageHeights[url] = estimatedHeight;
+  final imageLoadingStates = {for (var url in offlineImagePaths) url: ImageLoadingState.loading};
+  final imageHeights = Map<String, double>.from(chapter.imageHeights);
+  _updateChapterImageStates(chapter.chapterIndex, imageLoadingStates);
+
+  final constrainedWidth = MediaQuery.of(context).size.width * 0.7;
+  
+  // Pre-populate heights for offline images (they load instantly)
+  for (int i = 0; i < offlineImagePaths.length; i++) {
+    final path = offlineImagePaths[i];
+    if (path.startsWith('file://') && !imageHeights.containsKey(path)) {
+      // Estimate height for offline images
+      double estimatedHeight;
+      if (i == 0) {
+        estimatedHeight = constrainedWidth * 0.3;
+      } else if (i < 3) {
+        estimatedHeight = constrainedWidth * 1.4;
+      } else {
+        estimatedHeight = constrainedWidth * 1.6;
       }
+      imageHeights[path] = estimatedHeight;
     }
-    
-    final estimatedTotalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
-    final chapterIndex = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
-    if (chapterIndex != -1 && mounted) {
-      setState(() {
-        _loadedChapters[chapterIndex] = _loadedChapters[chapterIndex].copyWith(
-          imageHeights: Map.from(imageHeights),
-          chapterHeight: estimatedTotalHeight,
-        );
-      });
-      _calculateChapterOffsets();
-    }
+  }
+  
+  final estimatedTotalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
+  if (chapterIndex != -1 && mounted) {
+    setState(() {
+      _loadedChapters[chapterIndex] = _loadedChapters[chapterIndex].copyWith(
+        imageHeights: Map.from(imageHeights),
+        chapterHeight: estimatedTotalHeight,
+      );
+    });
+    _calculateChapterOffsets();
+  }
 
-    int loadedCount = 0;
-    final totalImages = chapter.images.length;
-    final batchSize = Platform.isAndroid ? 6 : 8;
+  int loadedCount = 0;
+  final totalImages = offlineImagePaths.length;
+  final batchSize = Platform.isAndroid ? 6 : 8;
+  
+  for (int batchStart = 0; batchStart < totalImages; batchStart += batchSize) {
+    final batchEnd = (batchStart + batchSize).clamp(0, totalImages);
+    final batch = offlineImagePaths.sublist(batchStart, batchEnd);
     
-    for (int batchStart = 0; batchStart < totalImages; batchStart += batchSize) {
-      final batchEnd = (batchStart + batchSize).clamp(0, totalImages);
-      final batch = chapter.images.sublist(batchStart, batchEnd);
-      
-      final batchFutures = batch.asMap().entries.map((entry) async {
-        final localIndex = entry.key;
-        final globalIndex = batchStart + localIndex;
-        final url = entry.value;
+    final batchFutures = batch.asMap().entries.map((entry) async {
+      final localIndex = entry.key;
+      final globalIndex = batchStart + localIndex;
+      final imagePath = entry.value;
 
-        try {
+      try {
+        ImageProvider imageProvider;
+        
+        // Handle offline images (file://) vs network images
+        if (imagePath.startsWith('file://')) {
+          // Local file - load directly from file system
+          final filePath = imagePath.substring(7); // Remove 'file://' prefix
+          final imageFile = File(filePath);
+          
+          if (await imageFile.exists()) {
+            final imageBytes = await imageFile.readAsBytes();
+            imageProvider = MemoryImage(imageBytes);
+            print('Loading offline image: $filePath');
+          } else {
+            throw Exception('Local file not found: $filePath');
+          }
+        } else {
+          // Network image - load from URL
           final response = await _httpClient.get(
-            Uri.parse(url),
+            Uri.parse(imagePath),
             headers: _imageHeaders(),
           ).timeout(Duration(seconds: Platform.isAndroid ? 8 : 12));
 
@@ -580,107 +623,110 @@ void _updateCurrentPage(double offset) {
           }
 
           final imageBytes = response.bodyBytes;
-          final imageProvider = MemoryImage(imageBytes);
-          
-          final imageStream = imageProvider.resolve(ImageConfiguration.empty);
-          final Completer<Size> dimensionCompleter = Completer();
-          
-          ImageStreamListener? listener;
-          listener = ImageStreamListener(
-            (ImageInfo info, bool synchronousCall) {
-              final size = Size(info.image.width.toDouble(), info.image.height.toDouble());
-              dimensionCompleter.complete(size);
-              imageStream.removeListener(listener!);
-            },
-            onError: (exception, stackTrace) {
-              dimensionCompleter.completeError(exception, stackTrace);
-              imageStream.removeListener(listener!);
-            },
-          );
-          imageStream.addListener(listener);
-
-          Size imageSize;
-          try {
-            imageSize = await dimensionCompleter.future.timeout(const Duration(seconds: 3));
-          } catch (e) {
-            imageSize = Size(constrainedWidth, imageHeights[url] ?? constrainedWidth * 1.5);
-          }
-          
-          final aspectRatio = imageSize.width / imageSize.height;
-          final actualHeight = constrainedWidth / aspectRatio;
-
-          await precacheImage(imageProvider, context);
-          
-          _preloadedImages[url] = imageProvider;
-          imageHeights[url] = actualHeight;
-          
-          if (mounted) {
-            _updateImageLoadingState(url, ImageLoadingState.loaded);
-          }
-          
-          loadedCount++;
-          return true;
-          
-        } catch (e) {
-          if (mounted) {
-            _updateImageLoadingState(url, ImageLoadingState.error);
-          }
-          return false;
+          imageProvider = MemoryImage(imageBytes);
         }
-      });
-
-      try {
-        await Future.wait(batchFutures).timeout(
-          Duration(seconds: Platform.isAndroid ? 15 : 25),
+        
+        // Get image dimensions
+        final imageStream = imageProvider.resolve(ImageConfiguration.empty);
+        final Completer<Size> dimensionCompleter = Completer();
+        
+        ImageStreamListener? listener;
+        listener = ImageStreamListener(
+          (ImageInfo info, bool synchronousCall) {
+            final size = Size(info.image.width.toDouble(), info.image.height.toDouble());
+            dimensionCompleter.complete(size);
+            imageStream.removeListener(listener!);
+          },
+          onError: (exception, stackTrace) {
+            dimensionCompleter.completeError(exception, stackTrace);
+            imageStream.removeListener(listener!);
+          },
         );
-      } catch (e) {
-        // Batch timeout handled silently
-      }
-      
-      if (mounted) {
-        final updatedTotalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
-        final chapterIdx = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
-        if (chapterIdx != -1) {
-          setState(() {
-            _loadedChapters[chapterIdx] = _loadedChapters[chapterIdx].copyWith(
-              imageHeights: Map.from(imageHeights),
-              chapterHeight: updatedTotalHeight,
-              isFullyLoaded: batchEnd >= totalImages,
-            );
-          });
-          WidgetsBinding.instance.addPostFrameCallback((_) => _calculateChapterOffsets());
+        imageStream.addListener(listener);
+
+        Size imageSize;
+        try {
+          imageSize = await dimensionCompleter.future.timeout(const Duration(seconds: 3));
+        } catch (e) {
+          imageSize = Size(constrainedWidth, imageHeights[imagePath] ?? constrainedWidth * 1.5);
         }
-      }
-      
-      if (batchEnd < totalImages) {
-        await Future.delayed(Duration(milliseconds: Platform.isAndroid ? 50 : 100));
-      }
-    }
+        
+        final aspectRatio = imageSize.width / imageSize.height;
+        final actualHeight = constrainedWidth / aspectRatio;
 
-    final successRate = totalImages > 0 ? (loadedCount / totalImages) : 0.0;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _calculateDividerPositions();
+        await precacheImage(imageProvider, context);
+        
+        _preloadedImages[imagePath] = imageProvider;
+        imageHeights[imagePath] = actualHeight;
+        
+        if (mounted) {
+          _updateImageLoadingState(imagePath, ImageLoadingState.loaded);
+        }
+        
+        loadedCount++;
+        return true;
+        
+      } catch (e) {
+        print('Failed to load image $imagePath: $e');
+        if (mounted) {
+          _updateImageLoadingState(imagePath, ImageLoadingState.error);
+        }
+        return false;
       }
     });
 
-    if (successRate >= 0.7 && mounted) {
-      _preloadNextChapterPartially();
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Some images failed to load in Chapter ${chapter.chapter.number}'),
-          backgroundColor: Colors.orange,
-          action: SnackBarAction(
-            label: 'Retry',
-            onPressed: () => _loadFullChapter(chapter),
-            textColor: Colors.white,
-          ),
-        ),
+    try {
+      await Future.wait(batchFutures).timeout(
+        Duration(seconds: Platform.isAndroid ? 15 : 25),
       );
+    } catch (e) {
+      // Batch timeout handled silently
+    }
+    
+    if (mounted) {
+      final updatedTotalHeight = imageHeights.values.fold(0.0, (sum, height) => sum + height) + 100.0;
+      final chapterIdx = _loadedChapters.indexWhere((c) => c.chapterIndex == chapter.chapterIndex);
+      if (chapterIdx != -1) {
+        setState(() {
+          _loadedChapters[chapterIdx] = _loadedChapters[chapterIdx].copyWith(
+            imageHeights: Map.from(imageHeights),
+            chapterHeight: updatedTotalHeight,
+            isFullyLoaded: batchEnd >= totalImages,
+          );
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) => _calculateChapterOffsets());
+      }
+    }
+    
+    if (batchEnd < totalImages) {
+      await Future.delayed(Duration(milliseconds: Platform.isAndroid ? 50 : 100));
     }
   }
+
+  final successRate = totalImages > 0 ? (loadedCount / totalImages) : 0.0;
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (mounted) {
+      _calculateDividerPositions();
+    }
+  });
+
+  if (successRate >= 0.7 && mounted) {
+    _preloadNextChapterPartially();
+  } else if (mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Some images failed to load in Chapter ${chapter.chapter.number}'),
+        backgroundColor: Colors.orange,
+        action: SnackBarAction(
+          label: 'Retry',
+          onPressed: () => _loadFullChapter(chapter),
+          textColor: Colors.white,
+        ),
+      ),
+    );
+  }
+}
 
   void _preloadNextChapterPartially() async {
     if (_currentVisibleChapterIndex < widget.allChapters.length - 1 && !_isLoadingNext) {
@@ -1494,106 +1540,166 @@ Widget _buildItem(BuildContext context, int index) {
   return const SizedBox.shrink();
 }
 
-  Widget _buildImage(String url, ImageLoadingState state, int imageIndex) {
-    final constrainedWidth = MediaQuery.of(context).size.width * 0.7;
-    final estimatedHeight = constrainedWidth * 1.3;
+Widget _buildImage(String imagePath, ImageLoadingState state, int imageIndex) {
+  final constrainedWidth = MediaQuery.of(context).size.width * 0.7;
+  final estimatedHeight = constrainedWidth * 1.3;
 
-    Widget buildImageContent({required bool disableMouseZoom}) {
-      if (state == ImageLoadingState.loaded && _preloadedImages.containsKey(url)) {
-        Widget imageWidget = Image(
-          image: _preloadedImages[url]!,
-          fit: BoxFit.fitWidth,
-          width: double.infinity,
-          gaplessPlayback: true,
-          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-            if (wasSynchronouslyLoaded || frame != null) {
-              return child;
-            }
-            return Container(
-              height: estimatedHeight,
-              color: Colors.grey[900],
-              child: const Center(
-                child: CircularProgressIndicator(color: Color(0xFF6c5ce7)),
-              ),
-            );
-          },
-          errorBuilder: (context, error, stackTrace) {
-            return _buildErrorWidget('Display error', imageIndex);
-          },
-        );
-
-        Widget interactiveViewer = InteractiveViewer(
-          panEnabled: false,
-          scaleEnabled: true,
-          minScale: 0.5,
-          maxScale: 3.0,
-          child: imageWidget,
-        );
-
-        return disableMouseZoom
-            ? NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  if (notification is UserScrollNotification && Platform.isWindows) {
-                    return true;
-                  }
-                  return false;
-                },
-                child: interactiveViewer,
-              )
-            : interactiveViewer;
-      }
-      
-      switch (state) {
-        case ImageLoadingState.waiting:
+  Widget buildImageContent({required bool disableMouseZoom}) {
+    if (state == ImageLoadingState.loaded && _preloadedImages.containsKey(imagePath)) {
+      Widget imageWidget = Image(
+        image: _preloadedImages[imagePath]!,
+        fit: BoxFit.fitWidth,
+        width: double.infinity,
+        gaplessPlayback: true,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded || frame != null) {
+            return child;
+          }
           return Container(
             height: estimatedHeight,
             color: Colors.grey[900],
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.hourglass_empty, color: Colors.grey, size: 32),
-                const SizedBox(height: 12),
-                Text('Page ${imageIndex + 1} - Waiting', 
-                     style: const TextStyle(color: Colors.grey, fontSize: 14)),
-              ],
+            child: const Center(
+              child: CircularProgressIndicator(color: Color(0xFF6c5ce7)),
             ),
           );
-          
-        case ImageLoadingState.loading:
-          return Container(
-            height: estimatedHeight,
-            color: Colors.grey[900],
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const SizedBox(
-                  width: 40, 
-                  height: 40, 
-                  child: CircularProgressIndicator(
-                    color: Color(0xFF6c5ce7), 
-                    strokeWidth: 4
-                  )
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return _buildErrorWidget('Display error', imageIndex);
+        },
+      );
+
+      Widget interactiveViewer = InteractiveViewer(
+        panEnabled: false,
+        scaleEnabled: true,
+        minScale: 0.5,
+        maxScale: 3.0,
+        child: imageWidget,
+      );
+
+      return disableMouseZoom
+          ? NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is UserScrollNotification && Platform.isWindows) {
+                  return true;
+                }
+                return false;
+              },
+              child: interactiveViewer,
+            )
+          : interactiveViewer;
+    }
+    
+    switch (state) {
+      case ImageLoadingState.waiting:
+        return Container(
+          height: estimatedHeight,
+          color: Colors.grey[900],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                imagePath.startsWith('file://') ? Icons.cloud_done : Icons.hourglass_empty,
+                color: imagePath.startsWith('file://') ? const Color(0xFF6c5ce7) : Colors.grey,
+                size: 32,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                imagePath.startsWith('file://') 
+                  ? 'Page ${imageIndex + 1} - Downloaded' 
+                  : 'Page ${imageIndex + 1} - Waiting',
+                style: TextStyle(
+                  color: imagePath.startsWith('file://') ? const Color(0xFF6c5ce7) : Colors.grey,
+                  fontSize: 14,
+                  fontWeight: imagePath.startsWith('file://') ? FontWeight.bold : FontWeight.normal,
                 ),
-                const SizedBox(height: 16),
-                Text('Loading Page ${imageIndex + 1}', 
-                     style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
+              ),
+              if (imagePath.startsWith('file://')) ...[
+                const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: const Color(0xFF6c5ce7).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8)
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF6c5ce7).withOpacity(0.3)),
                   ),
-                  child: const Text('Please wait...', 
-                       style: TextStyle(color: Color(0xFF6c5ce7), fontSize: 11, fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    'OFFLINE',
+                    style: TextStyle(
+                      color: Color(0xFF6c5ce7),
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
-            ),
+            ],
+          ),
+        );
+        
+      case ImageLoadingState.loading:
+        return Container(
+          height: estimatedHeight,
+          color: Colors.grey[900],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(
+                width: 40, 
+                height: 40, 
+                child: CircularProgressIndicator(
+                  color: Color(0xFF6c5ce7), 
+                  strokeWidth: 4
+                )
+              ),
+              const SizedBox(height: 16),
+              Text(
+                imagePath.startsWith('file://') 
+                  ? 'Loading Offline Page ${imageIndex + 1}' 
+                  : 'Loading Page ${imageIndex + 1}',
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6c5ce7).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8)
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (imagePath.startsWith('file://')) ...[
+                      const Icon(Icons.cloud_done, color: Color(0xFF6c5ce7), size: 12),
+                      const SizedBox(width: 4),
+                      const Text('Downloaded', style: TextStyle(color: Color(0xFF6c5ce7), fontSize: 11, fontWeight: FontWeight.bold)),
+                    ] else ...[
+                      const Icon(Icons.cloud_download, color: Color(0xFF6c5ce7), size: 12),
+                      const SizedBox(width: 4),
+                      const Text('Online', style: TextStyle(color: Color(0xFF6c5ce7), fontSize: 11, fontWeight: FontWeight.bold)),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+        
+      case ImageLoadingState.loaded:
+        // Handle both file:// and network URLs
+        if (imagePath.startsWith('file://')) {
+          final filePath = imagePath.substring(7); // Remove 'file://' prefix
+          return Image.file(
+            File(filePath),
+            fit: BoxFit.fitWidth,
+            width: double.infinity,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) {
+              return _buildErrorWidget('Local file error - File may be corrupted or moved', imageIndex);
+            },
           );
-          
-        case ImageLoadingState.loaded:
+        } else {
           return Image.network(
-            url,
+            imagePath,
             fit: BoxFit.fitWidth,
             width: double.infinity,
             gaplessPlayback: true,
@@ -1636,35 +1742,42 @@ Widget _buildItem(BuildContext context, int index) {
               );
             },
             errorBuilder: (context, error, stackTrace) {
-              return _buildErrorWidget('Network error', imageIndex);
+              return _buildErrorWidget('Network error - Check your connection', imageIndex);
             },
           );
-          
-        case ImageLoadingState.error:
-          return _buildErrorWidget('Loading failed', imageIndex);
-      }
-    }
-
-    if (Platform.isWindows || Platform.isLinux) {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final maxImageWidth = constraints.maxWidth * 0.7 > 800 ? 800 : constraints.maxWidth * 0.7;
-          return Row(
-            children: [
-              Expanded(child: Container(color: const Color(0xFF2a1a3a))),
-              SizedBox(
-                width: maxImageWidth.toDouble(),
-                child: buildImageContent(disableMouseZoom: true),
-              ),
-              Expanded(child: Container(color: const Color(0xFF2a1a3a))),
-            ],
-          );
-        },
-      );
-    } else {
-      return buildImageContent(disableMouseZoom: false);
+        }
+        
+      case ImageLoadingState.error:
+        return _buildErrorWidget(
+          imagePath.startsWith('file://') 
+            ? 'Local file error - File may be corrupted' 
+            : 'Network error - Failed to load', 
+          imageIndex
+        );
     }
   }
+
+  // Platform-specific layout handling
+  if (Platform.isWindows || Platform.isLinux) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxImageWidth = constraints.maxWidth * 0.7 > 800 ? 800 : constraints.maxWidth * 0.7;
+        return Row(
+          children: [
+            Expanded(child: Container(color: const Color(0xFF2a1a3a))),
+            SizedBox(
+              width: maxImageWidth.toDouble(),
+              child: buildImageContent(disableMouseZoom: true),
+            ),
+            Expanded(child: Container(color: const Color(0xFF2a1a3a))),
+          ],
+        );
+      },
+    );
+  } else {
+    return buildImageContent(disableMouseZoom: false);
+  }
+}
 
   Widget _buildErrorWidget(String error, int imageIndex) {
     return Container(
@@ -1993,6 +2106,41 @@ Widget _buildItem(BuildContext context, int index) {
         ),
       ),
     );
+  }
+}
+
+
+//download images things here
+class OfflineImageLoader {
+  static Future<String?> getLocalImagePath(String manhwaId, double chapterNumber, int imageIndex) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final imagePath = '${dir.path}/manhwa/$manhwaId/$chapterNumber/image_$imageIndex.jpg';
+      final file = File(imagePath);
+      
+      if (await file.exists()) {
+        return imagePath;
+      }
+      return null;
+    } catch (e) {
+      print('Error checking local image: $e');
+      return null;
+    }
+  }
+
+  static Future<List<String>> getChapterImagePaths(String manhwaId, double chapterNumber, List<String> networkUrls) async {
+    final imagePaths = <String>[];
+    
+    for (int i = 0; i < networkUrls.length; i++) {
+      final localPath = await getLocalImagePath(manhwaId, chapterNumber, i);
+      if (localPath != null) {
+        imagePaths.add('file://$localPath'); // Use file:// prefix for local files
+      } else {
+        imagePaths.add(networkUrls[i]); // Fall back to network URL
+      }
+    }
+    
+    return imagePaths;
   }
 }
 
