@@ -42,7 +42,7 @@ class _ManhwaScreenState extends State<ManhwaScreen> {
     setState(() => _isLoading = true);
     
     try {
-      // Use ManhwaService instead of legacy data
+    
       manhwa = await ManhwaService.getManhwaById(widget.manhwaId.toString());
       
       if (manhwa != null) {
