@@ -315,7 +315,7 @@ class ApiService {
 
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/health'),
+        Uri.parse('$_baseUrl/hey'),
         headers: {'Accept': 'application/json'},
       ).timeout(const Duration(seconds: 8));
       
@@ -370,7 +370,7 @@ class ApiService {
       }
       
       final response = await http.get(
-        Uri.parse('$testUrl/health'),
+        Uri.parse('$testUrl/hey'),
         headers: {'Accept': 'application/json'},
       ).timeout(const Duration(seconds: 8));
       
