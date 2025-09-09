@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "workspace.ignoreDir": [
+    ".zed",
+    "build",
+    ".dart_tool",
+    ".idea",
+    ".vscode",
+    ".git",
+    "android",
+    "ios",
+    "web",
+    "windows",
+    "macos",
+    "linux",
+    "test",
+    "example",
+    "scripts",
+    "lib"
+  ]
+}

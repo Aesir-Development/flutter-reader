@@ -6,7 +6,7 @@ import 'dart:io';
 import '../services/manhwa_service.dart';
 import '../models/manwha.dart';
 import '../models/chapter.dart';
-import '../screens/reader_screen.dart';
+import './reader_screen.dart';
 import '../services/progress_service.dart';
 
 class ManhwaScreen extends StatefulWidget {
