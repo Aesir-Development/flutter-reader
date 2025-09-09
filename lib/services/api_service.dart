@@ -2,9 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'manhwa_service.dart';
-
+import 'sqlite_progress_service.dart';
 class ApiService {
-  static const String _baseUrl = 'http://localhost:8080';
+  static const String _defaultBaseUrl = 'http://localhost:8080';
+  static String _baseUrl = _defaultBaseUrl;
   
   static String? _authToken;
   static User? _currentUser;
@@ -16,12 +17,65 @@ class ApiService {
 
   // Initialize from database
   static Future<void> initialize() async {
+    // Load custom server IP if exists
+    await _loadCustomServerIP();
+    
+    // Load auth data
     final authData = await ManhwaService.getAuthData();
     if (authData != null) {
       _authToken = authData['token'];
       _currentUser = User.fromJson(jsonDecode(authData['user_data']!));
     }
   }
+
+  // Server IP Management
+  static String? getCurrentServerIP() {
+    if (_baseUrl == _defaultBaseUrl) {
+      return null; // Return null for default server
+    }
+    return _baseUrl;
+  }
+
+  static Future<void> setServerIP(String? ip) async {
+    if (ip == null || ip.trim().isEmpty) {
+      // Reset to default server
+      _baseUrl = _defaultBaseUrl;
+      await ManhwaService.removeCustomServerIP();
+    } else {
+      // Set custom server IP
+      String serverUrl = ip.trim();
+      
+      // Add http:// if no protocol is specified
+      if (!serverUrl.startsWith('http://') && !serverUrl.startsWith('https://')) {
+        serverUrl = 'http://$serverUrl';
+      }
+      
+      // Remove trailing slash if present
+      if (serverUrl.endsWith('/')) {
+        serverUrl = serverUrl.substring(0, serverUrl.length - 1);
+      }
+      
+      _baseUrl = serverUrl;
+      await ManhwaService.saveCustomServerIP(serverUrl);
+    }
+    
+    // Clear connection cache when server changes
+    clearConnectionCache();
+    
+    // Clear auth data when switching servers (optional - you might want to keep it)
+    // await logout();
+  }
+
+  static Future<void> _loadCustomServerIP() async {
+    final customIP = await ManhwaService.getCustomServerIP();
+    if (customIP != null) {
+      _baseUrl = customIP;
+    } else {
+      _baseUrl = _defaultBaseUrl;
+    }
+  }
+
+  static String get baseUrl => _baseUrl;
 
   // Check if user is logged in
   static bool get isLoggedIn => _authToken != null && _currentUser != null;
@@ -50,7 +104,7 @@ class ApiService {
           'email': email,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
@@ -64,6 +118,12 @@ class ApiService {
         final error = jsonDecode(response.body)['error'] ?? 'Registration failed';
         return AuthResult.error(error);
       }
+    } on SocketException {
+      _updateConnectionCache(false);
+      return AuthResult.error('Cannot connect to server. Please check your connection and server address.');
+    } on HttpException {
+      _updateConnectionCache(false);
+      return AuthResult.error('Server error. Please try again later.');
     } catch (e) {
       _updateConnectionCache(false);
       return AuthResult.error('Network error: ${e.toString()}');
@@ -79,7 +139,7 @@ class ApiService {
           'email': email,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -93,6 +153,12 @@ class ApiService {
         final error = jsonDecode(response.body)['error'] ?? 'Login failed';
         return AuthResult.error(error);
       }
+    } on SocketException {
+      _updateConnectionCache(false);
+      return AuthResult.error('Cannot connect to server. Please check your connection and server address.');
+    } on HttpException {
+      _updateConnectionCache(false);
+      return AuthResult.error('Server error. Please try again later.');
     } catch (e) {
       _updateConnectionCache(false);
       return AuthResult.error('Network error: ${e.toString()}');
@@ -131,7 +197,7 @@ class ApiService {
         final syncData = SyncData.fromJson(data);
         
         // Save last sync time in database
-        await ManhwaService.setLastSyncTime(DateTime.now());
+        await SQLiteProgressService.saveSetting('last_sync', DateTime.now().toIso8601String());
         
         // Update connection cache
         _updateConnectionCache(true);
@@ -140,6 +206,9 @@ class ApiService {
       } else {
         return SyncResult.error('Failed to sync: ${response.statusCode}');
       }
+    } on SocketException {
+      _updateConnectionCache(false);
+      return SyncResult.error('Cannot connect to server');
     } catch (e) {
       _updateConnectionCache(false);
       return SyncResult.error('Network error: ${e.toString()}');
@@ -167,6 +236,10 @@ class ApiService {
         print('Failed to push progress: ${response.statusCode}');
         return SyncResult.error('Failed to push progress: ${response.statusCode}');
       }
+    } on SocketException {
+      _updateConnectionCache(false);
+      print('Failed to push progress: Cannot connect to server');
+      return SyncResult.error('Cannot connect to server');
     } catch (e) {
       _updateConnectionCache(false);
       print('Failed to push progress: $e');
@@ -197,6 +270,9 @@ class ApiService {
       } else {
         return SyncResult.error('Failed to sync library: ${response.statusCode}');
       }
+    } on SocketException {
+      _updateConnectionCache(false);
+      return SyncResult.error('Cannot connect to server');
     } catch (e) {
       _updateConnectionCache(false);
       return SyncResult.error('Network error: ${e.toString()}');
@@ -217,6 +293,9 @@ class ApiService {
         _updateConnectionCache(true);
         return jsonDecode(response.body);
       }
+    } on SocketException {
+      _updateConnectionCache(false);
+      print('Failed to get user stats: Cannot connect to server');
     } catch (e) {
       _updateConnectionCache(false);
       print('Failed to get user stats: $e');
@@ -236,14 +315,17 @@ class ApiService {
 
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/health'),
+        Uri.parse('$_baseUrl/hey'),
         headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 8));
       
       final isOnline = response.statusCode == 200;
       _updateConnectionCache(isOnline);
       return isOnline;
       
+    } on SocketException {
+      _updateConnectionCache(false);
+      return false;
     } catch (e) {
       _updateConnectionCache(false);
       return false;
@@ -270,6 +352,33 @@ class ApiService {
   static void clearConnectionCache() {
     _lastConnectionStatus = null;
     _lastConnectionCheck = null;
+  }
+
+  // Test connection to a specific server without changing current server
+  static Future<bool> testConnection(String serverUrl) async {
+    try {
+      String testUrl = serverUrl.trim();
+      
+      // Add http:// if no protocol is specified
+      if (!testUrl.startsWith('http://') && !testUrl.startsWith('https://')) {
+        testUrl = 'http://$testUrl';
+      }
+      
+      // Remove trailing slash if present
+      if (testUrl.endsWith('/')) {
+        testUrl = testUrl.substring(0, testUrl.length - 1);
+      }
+      
+      final response = await http.get(
+        Uri.parse('$testUrl/hey'),
+        headers: {'Accept': 'application/json'},
+      ).timeout(const Duration(seconds: 8));
+      
+      return response.statusCode == 200;
+      
+    } catch (e) {
+      return false;
+    }
   }
 }
 

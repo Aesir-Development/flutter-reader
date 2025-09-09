@@ -21,10 +21,12 @@ class ProgressService {
     int pageIndex, 
     double scrollPosition,
   ) async {
-    // Save locally first (this is fast)
+    print('ProgressService.saveProgress: manhwaId=$manhwaId, chapter=$chapterNumber, page=$pageIndex, scrollPosition=$scrollPosition');
+
+    // Save locally first
     await SQLiteProgressService.saveProgress(manhwaId, chapterNumber, pageIndex, scrollPosition);
     
-    // Queue for sync if logged in, but DON'T sync immediately
+    // Queue for sync if logged in
     if (ApiService.isLoggedIn) {
       final update = ProgressUpdate(
         manhwaId: manhwaId,
@@ -37,8 +39,7 @@ class ProgressService {
       await ManhwaService.addPendingProgressUpdate(update);
       _hasPendingSync = true;
       
-      // Don't sync immediately - let it be handled by chapter exit or periodic sync
-      print('Progress saved locally and queued for sync (${manhwaId}_${chapterNumber}_${pageIndex})');
+      print('Progress saved locally and queued for sync (${manhwaId}_${chapterNumber}_${pageIndex}_$scrollPosition)');
     }
   }
 
@@ -50,7 +51,7 @@ class ProgressService {
       final update = ProgressUpdate(
         manhwaId: manhwaId,
         chapterNumber: chapterNumber,
-        currentPage: 0, // Will be updated with actual page later
+        currentPage: 0,
         scrollPosition: 0.0,
         isRead: true,
       );
@@ -64,7 +65,29 @@ class ProgressService {
     }
   }
 
-  // NEW: Explicit sync method - call this when exiting chapter/reader
+  // Unmark completed and queue for sync (but don't sync immediately unless requested)
+  static Future<void> unmarkCompleted(String manhwaId, double chapterNumber, {bool syncImmediately = false}) async {
+    await SQLiteProgressService.unmarkCompleted(manhwaId, chapterNumber);
+    
+    if (ApiService.isLoggedIn) {
+      final update = ProgressUpdate(
+        manhwaId: manhwaId,
+        chapterNumber: chapterNumber,
+        currentPage: 0,
+        scrollPosition: 0.0,
+        isRead: false,
+      );
+      
+      await ManhwaService.addPendingProgressUpdate(update);
+      _hasPendingSync = true;
+      
+      if (syncImmediately) {
+        await syncNow();
+      }
+    }
+  }
+
+  // Explicit sync method - call this when exiting chapter/reader
   static Future<bool> syncNow({bool force = false}) async {
     if (!ApiService.isLoggedIn) {
       print('Not logged in, skipping sync');
@@ -235,6 +258,11 @@ class ProgressService {
             remoteProgress.manhwaId,
             remoteProgress.chapterNumber,
           );
+        } else {
+          await SQLiteProgressService.unmarkCompleted(
+            remoteProgress.manhwaId,
+            remoteProgress.chapterNumber,
+          );
         }
       }
     }
@@ -254,7 +282,7 @@ class ProgressService {
       'isSyncing': _isSyncing,
       'pendingUpdates': pendingCount,
       'lastSync': lastSync?.toIso8601String(),
-      'connectionStatus': connectionStatus, // true/false/null
+      'connectionStatus': connectionStatus,
       'hasPendingSync': _hasPendingSync,
     };
   }

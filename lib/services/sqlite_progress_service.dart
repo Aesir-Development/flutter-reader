@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
@@ -60,6 +59,26 @@ class SQLiteProgressService {
     );
   }
 
+  static Future<T> _executeWithRetry<T>(Future<T> Function() operation, {int maxRetries = 3}) async {
+    int attempts = 0;
+    
+    while (attempts < maxRetries) {
+      try {
+        return await operation();
+      } catch (e) {
+        attempts++;
+        if (e.toString().contains('database is locked') && attempts < maxRetries) {
+          print('Database locked, retrying... (attempt $attempts/$maxRetries)');
+          await Future.delayed(Duration(milliseconds: 100 * attempts)); // Exponential backoff
+          continue;
+        }
+        rethrow; // If not a lock error or max retries reached
+      }
+    }
+    
+    throw Exception('Max retries exceeded');
+  }
+
   static Future<void> _createTables(Database db) async {
     // Create manhwas table
     await db.execute('''
@@ -81,22 +100,21 @@ class SQLiteProgressService {
     // Create chapters table with progress columns
     await db.execute('''
       CREATE TABLE IF NOT EXISTS chapters (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  manhwa_id TEXT NOT NULL,
-  number REAL NOT NULL,
-  title TEXT NOT NULL,
-  release_date TEXT NOT NULL,
-  is_read BOOLEAN DEFAULT FALSE,
-  is_downloaded BOOLEAN DEFAULT FALSE,
-  images TEXT,
-  current_page INTEGER DEFAULT 0,
-  scroll_position REAL DEFAULT 0.0,
-  last_read_at TIMESTAMP,
-  reading_time_seconds INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
-  UNIQUE(manhwa_id, number)
-);
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        manhwa_id TEXT NOT NULL,
+        number REAL NOT NULL,
+        title TEXT NOT NULL,
+        release_date TEXT NOT NULL,
+        is_read BOOLEAN DEFAULT FALSE,
+        is_downloaded BOOLEAN DEFAULT FALSE,
+        images TEXT,
+        current_page INTEGER DEFAULT 0,
+        scroll_position REAL DEFAULT 0.0,
+        last_read_at TIMESTAMP,
+        reading_time_seconds INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (manhwa_id) REFERENCES manhwas (id) ON DELETE CASCADE,
+        UNIQUE(manhwa_id, number)
       )
     ''');
 
@@ -129,6 +147,7 @@ class SQLiteProgressService {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_manhwa_chapters ON chapters(manhwa_id, number)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_chapter_read_status ON chapters(manhwa_id, is_read)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_last_read ON chapters(manhwa_id, last_read_at DESC)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_chapter_downloaded ON chapters(manhwa_id, is_downloaded)');
     } catch (e) {
       print('Indexes may already exist: $e');
     }
@@ -142,26 +161,27 @@ class SQLiteProgressService {
     double scrollPosition,
     {bool markAsRead = false}
   ) async {
-    final db = await database;
+    await _executeWithRetry(() async {
+      final db = await database;
+      
+      final updateData = {
+        'current_page': pageIndex,
+        'scroll_position': scrollPosition,
+        'last_read_at': DateTime.now().toIso8601String(),
+      };
+      
+      if (markAsRead) {
+        updateData['is_read'] = 1;
+      }
+      
+      await db.update(
+        'chapters',
+        updateData,
+        where: 'manhwa_id = ? AND number = ?',
+        whereArgs: [manhwaId, chapterNumber],
+      );
+    });
     
-    final updateData = {
-      'current_page': pageIndex,
-      'scroll_position': scrollPosition,
-      'last_read_at': DateTime.now().toIso8601String(),
-    };
-    
-    if (markAsRead) {
-      updateData['is_read'] = 1;
-    }
-    
-    await db.update(
-      'chapters',
-      updateData,
-      where: 'manhwa_id = ? AND number = ?',
-      whereArgs: [manhwaId, chapterNumber],
-    );
-
-    // Update cache
     _updateCache(manhwaId, chapterNumber, {
       'pageIndex': pageIndex,
       'scrollPosition': scrollPosition,
@@ -172,11 +192,9 @@ class SQLiteProgressService {
 
   // Get reading position for a chapter
   static Future<Map<String, dynamic>?> getProgress(String manhwaId, double chapterNumber) async {
-    // Check cache first
-    final cacheKey = '${manhwaId}_$chapterNumber';
-    if (_cache.containsKey(manhwaId) && _cache[manhwaId]!.containsKey(cacheKey)) {
-      return _cache[manhwaId]![cacheKey];
-    }
+    // Clear cache to ensure fresh data
+    _cache.remove(manhwaId);
+    print('Cleared cache for manhwaId=$manhwaId');
 
     final db = await database;
     final results = await db.query(
@@ -196,11 +214,14 @@ class SQLiteProgressService {
         'isRead': (result['is_read'] as int) == 1,
       };
       
+      print('SQLiteProgressService.getProgress: Retrieved for manhwaId=$manhwaId, chapter=$chapterNumber: $progress');
+      
       // Cache the result
       _updateCache(manhwaId, chapterNumber, progress);
       return progress;
     }
     
+    print('SQLiteProgressService.getProgress: No progress found for manhwaId=$manhwaId, chapter=$chapterNumber');
     return null;
   }
 
@@ -221,6 +242,85 @@ class SQLiteProgressService {
     // Invalidate cache for this manhwa
     _cache.remove(manhwaId);
   } 
+
+  // Unmark chapter as completed
+  static Future<void> unmarkCompleted(String manhwaId, double chapterNumber) async {
+    final db = await database;
+    
+    await db.update(
+      'chapters',
+      {
+        'is_read': 0,
+        'last_read_at': DateTime.now().toIso8601String(),
+      },
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
+  }
+
+  // Mark chapter as downloaded
+static Future<void> markDownloaded(String manhwaId, double chapterNumber) async {
+  print('=== markDownloaded DEBUG ===');
+  print('Marking manhwa_id: "$manhwaId", chapter: $chapterNumber as downloaded');
+  
+  final db = await database;
+  
+  // Check if the chapter exists first
+  final existingChapter = await db.query(
+    'chapters',
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+  );
+  
+  print('Existing chapter found: ${existingChapter.length}');
+  if (existingChapter.isNotEmpty) {
+    print('Chapter details: ${existingChapter.first}');
+  }
+  
+  final updatedRows = await db.update(
+    'chapters',
+    {'is_downloaded': 1},
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+  );
+
+  print('Updated rows: $updatedRows');
+  
+  // Verify the update
+  final verifyUpdate = await db.query(
+    'chapters',
+    where: 'manhwa_id = ? AND number = ?',
+    whereArgs: [manhwaId, chapterNumber],
+  );
+  
+  if (verifyUpdate.isNotEmpty) {
+    print('Verification - is_downloaded: ${verifyUpdate.first['is_downloaded']}');
+  } else {
+    print('ERROR: Chapter not found after update!');
+  }
+  
+  // Invalidate cache for this manhwa
+  _cache.remove(manhwaId);
+  print('=== END markDownloaded DEBUG ===');
+}
+
+  // Unmark chapter as downloaded
+  static Future<void> unmarkDownloaded(String manhwaId, double chapterNumber) async {
+    final db = await database;
+    
+    await db.update(
+      'chapters',
+      {'is_downloaded': 0},
+      where: 'manhwa_id = ? AND number = ?',
+      whereArgs: [manhwaId, chapterNumber],
+    );
+
+    // Invalidate cache for this manhwa
+    _cache.remove(manhwaId);
+  }
 
   // Check if chapter is completed
   static Future<bool> isCompleted(String manhwaId, double chapterNumber) async {
@@ -247,6 +347,71 @@ class SQLiteProgressService {
     );
 
     return results.map((row) => (row['number'] as num).toDouble()).toSet();
+  }
+
+  // Get list of downloaded chapters for a manhwa
+static Future<Set<double>> getDownloadedChapters(String manhwaId) async {
+  print('=== getDownloadedChapters DEBUG ===');
+  print('Querying for manhwaId: "$manhwaId"');
+  
+  final db = await database;
+  
+  // First, let's see what's actually in the database
+  final allChapters = await db.query('chapters');
+  print('Total chapters in database: ${allChapters.length}');
+  
+  // Show all manhwa_ids in database
+  final allManhwaIds = await db.rawQuery('SELECT DISTINCT manhwa_id FROM chapters');
+  print('All manhwa_ids in database: ${allManhwaIds.map((row) => row['manhwa_id']).toList()}');
+  
+  // Show downloaded chapters for all manhwas
+  final allDownloaded = await db.query(
+    'chapters',
+    columns: ['manhwa_id', 'number', 'is_downloaded'],
+    where: 'is_downloaded = 1',
+  );
+  print('All downloaded chapters: ${allDownloaded.length}');
+  for (var row in allDownloaded) {
+    print('- manhwa_id: "${row['manhwa_id']}", chapter: ${row['number']}, downloaded: ${row['is_downloaded']}');
+  }
+  
+  // Now try the actual query
+  final results = await db.query(
+    'chapters',
+    columns: ['number'],
+    where: 'manhwa_id = ? AND is_downloaded = 1',
+    whereArgs: [manhwaId],
+  );
+  
+  print('Query results for manhwa_id "$manhwaId": ${results.length} chapters');
+  for (var row in results) {
+    print('- Chapter: ${row['number']}');
+  }
+
+  final downloadedChapters = results.map((row) => (row['number'] as num).toDouble()).toSet();
+  print('Returning: $downloadedChapters');
+  print('=== END getDownloadedChapters DEBUG ===');
+  
+  return downloadedChapters;
+}
+
+
+  // Get all downloaded chapters across all manhwa
+  static Future<List<Map<String, dynamic>>> getAllDownloadedChapters() async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT m.name as manhwaName, c.number as chapterNumber, c.manhwa_id as manhwaId
+      FROM chapters c
+      JOIN manhwas m ON c.manhwa_id = m.id
+      WHERE c.is_downloaded = 1
+      ORDER BY m.name ASC, c.number ASC
+    ''');
+    
+    return results.map((row) => {
+      'manhwaName': row['manhwaName'] as String,
+      'chapterNumber': (row['chapterNumber'] as num).toDouble(), // Cast to double
+      'manhwaId': row['manhwaId'] as String,
+    }).toList();
   }
 
   // Find best chapter to continue from
@@ -353,13 +518,13 @@ class SQLiteProgressService {
     final progress = <String, dynamic>{};
     final completed = <double>[];
 
-for (final row in results) {
-  final chapterNumber = (row['number'] as num).toDouble();
-  
-  if ((row['is_read'] as int) == 1) {
-    completed.add(chapterNumber);
-  }
-     
+    for (final row in results) {
+      final chapterNumber = (row['number'] as num).toDouble();
+      
+      if ((row['is_read'] as int) == 1) {
+        completed.add(chapterNumber);
+      }
+      
       if ((row['current_page'] as int) > 0 || (row['scroll_position'] as double) > 0.0) {
         final cacheKey = '${manhwaId}_$chapterNumber';
         progress[cacheKey] = {
@@ -434,11 +599,13 @@ for (final row in results) {
   
   // Save a setting (auth tokens, preferences, etc.)
   static Future<void> saveSetting(String key, String value) async {
-    final db = await database;
-    await db.rawInsert(
-      'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
-      [key, value]
-    );
+    await _executeWithRetry(() async {
+      final db = await database;
+      await db.rawInsert(
+        'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
+        [key, value]
+      );
+    });
     print('Setting saved: $key');
   }
 
@@ -462,13 +629,15 @@ for (final row in results) {
 
   // Delete a setting by key
   static Future<void> deleteSetting(String key) async {
-    final db = await database;
-    final deletedRows = await db.delete(
-      'app_settings',
-      where: 'key = ?',
-      whereArgs: [key],
-    );
-    print('Setting deleted: $key ($deletedRows rows affected)');
+    await _executeWithRetry(() async {
+      final db = await database;
+      final deletedRows = await db.delete(
+        'app_settings',
+        where: 'key = ?',
+        whereArgs: [key],
+      );
+      print('Setting deleted: $key ($deletedRows rows affected)');
+    });
   }
 
   // Get all settings

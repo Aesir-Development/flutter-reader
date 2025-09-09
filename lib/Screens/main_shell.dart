@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/progress_service.dart';
+import '../services/manhwa_service.dart';
+import '../services/sqlite_progress_service.dart';
 import 'library_screen.dart';
 import 'update_screen.dart';
 import 'social_screen.dart';
@@ -174,37 +176,253 @@ void initState() {
     );
   }
 
-  Future<void> _logout() async {
-    final confirmed = await showDialog<bool>(
+  // Check if database has existing data
+  Future<bool> _hasExistingData() async {
+    try {
+      final stats = await ManhwaService.getStats();
+      final dbInfo = await SQLiteProgressService.getDatabaseInfo();
+      
+      final hasManhwas = (stats['total_manhwas'] ?? 0) > 0;
+      final hasProgress = (dbInfo['progress_records'] ?? 0) > 0;
+      
+      return hasManhwas || hasProgress;
+    } catch (e) {
+      print('Error checking existing data: $e');
+      return false;
+    }
+  }
+
+  // Wipe all database data
+  Future<void> _wipeDatabase() async {
+    try {
+      // Clear all manhwa data
+      await ManhwaService.clearAllData();
+      
+      // Clear all progress data
+      await SQLiteProgressService.clearAllSettings();
+      
+      // Clear any remaining progress records
+      final db = await SQLiteProgressService.database;
+      await db.update(
+        'chapters',
+        {
+          'is_read': 0,
+          'current_page': 0,
+          'scroll_position': 0.0,
+          'last_read_at': null,
+          'reading_time_seconds': 0,
+        },
+      );
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.delete_sweep, color: Colors.white, size: 16),
+              SizedBox(width: 8),
+              Text('All local data has been cleared'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error, color: Colors.white, size: 16),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Failed to clear data: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      rethrow;
+    }
+  }
+
+  // Show logout options dialog
+  Future<String?> _showLogoutOptionsDialog() async {
+    final hasData = await _hasExistingData();
+    
+    if (!hasData) {
+      // If no data exists, just show simple logout confirmation
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF2a2a2a),
+          title: const Text('Logout', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(color: Colors.grey),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Logout', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
+      return confirmed == true ? 'logout' : null;
+    }
+
+    // Show full options dialog with data wipe choice
+    return await showDialog<String?>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2a2a2a),
-        title: const Text('Logout', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Are you sure you want to logout? Your local data will remain.',
-          style: TextStyle(color: Colors.grey),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.logout, color: Colors.blue, size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Text('Logout Options', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'You have local manhwa data and reading progress stored on this device.',
+              style: TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '🔒 Privacy Options',
+                    style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '• KEEP DATA: Logout but keep your library and progress (others using this device can access it)',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '• WIPE DATA: Clear all data for privacy (recommended for shared devices)',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'What would you like to do?',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, null), // Cancel
             child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Logout', style: TextStyle(color: Colors.red)),
+            onPressed: () => Navigator.pop(context, 'logout'), // Keep data
+            child: const Text(
+              'Logout & Keep Data',
+              style: TextStyle(color: Color(0xFF6c5ce7)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, 'wipe'), // Wipe data
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text(
+              'Logout & Wipe Data',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
     );
+  }
 
-    if (confirmed == true) {
+  Future<void> _logout() async {
+    final result = await _showLogoutOptionsDialog();
+    
+    if (result == null) return; // User cancelled
+    
+    // Show loading state
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          color: Color(0xFF2a2a2a),
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Color(0xFF6c5ce7)),
+                SizedBox(height: 16),
+                Text('Processing logout...', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Wipe data if requested
+      if (result == 'wipe') {
+        await _wipeDatabase();
+      }
+
       // Clear connection cache on logout
       ApiService.clearConnectionCache();
       await ApiService.logout();
       
+      // Hide loading dialog
+      Navigator.pop(context);
+      
+      // Navigate to login screen
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const ManhwaLoginScreen()),
+      );
+      
+    } catch (e) {
+      // Hide loading dialog
+      Navigator.pop(context);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Logout failed: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }

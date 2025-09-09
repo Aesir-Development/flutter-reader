@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutterreader/Screens/login_screen.dart';
+import 'services/sqlite_progress_service.dart';
 import 'package:flutterreader/services/plugin_service.dart';
-import 'package:flutterreader/services/sqlite_progress_service.dart';
 import 'services/manhwa_service.dart';
 import 'services/progress_service.dart';
 import 'services/api_service.dart';
@@ -12,7 +12,7 @@ void main() async {
 
   // Initialize services
   await initializeApp();
-  await SQLiteProgressService.addDummyData();
+    //await SQLiteProgressService.addDummyData();
   runApp(MyApp());
 }
 
@@ -24,23 +24,32 @@ Future<void> initializeApp() async {
     print('📚 Initializing manhwa database...');
     final stats = await ManhwaService.getStats();
     print('✅ Database initialized! Stats: $stats');
-
-    // 2. Initialize progress service (which handles sync)
+    
+    // ADD DELAY to let database operations complete
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // 2. Initialize progress service
     print('🔄 Initializing progress service...');
     await ProgressService.initialize();
     print('✅ Progress service initialized!');
-
-    // 3. Check if user is logged in and try background sync
+    
+    // ADD DELAY before sync
+    await Future.delayed(const Duration(milliseconds: 300));
+    
+    // 3. Background sync (make it non-blocking)
     if (ApiService.isLoggedIn) {
       print('👤 User is logged in, attempting background sync...');
-      final canConnect = await ApiService.checkConnection();
-      if (canConnect) {
-        final syncSuccess = await ProgressService.performFullSync();
-        print(syncSuccess
-            ? '✅ Background sync successful!'
-            : '⚠️ Background sync failed');
-      } else {
-        print('📱 No connection, working offline');
+      try {
+        final canConnect = await ApiService.checkConnection();
+        if (canConnect) {
+          final syncSuccess = await ProgressService.performFullSync();
+          print(syncSuccess ? '✅ Background sync successful!' : '⚠️ Background sync failed');
+        } else {
+          print('📱 No connection, working offline');
+        }
+      } catch (e) {
+        print('! Background sync failed: $e');
+        // Continue app startup even if sync fails
       }
     }
 
