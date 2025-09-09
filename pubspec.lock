@@ -70,14 +70,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  flutter_js:
-    dependency: "direct main"
-    description:
-      name: flutter_js
-      sha256: a04966b102967891ee4947d6e52b450676f16204876ba936e394008ca26db04b
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.8.5"
   flutter_lints:
     dependency: "direct dev"
     description:
@@ -86,6 +78,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.3"
+  flutter_lua_vm:
+    dependency: "direct main"
+    description:
+      path: "../flutter_lua_vm"
+      relative: true
+    source: path
+    version: "0.0.1"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -336,14 +335,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
-  sync_http:
-    dependency: transitive
-    description:
-      name: sync_http
-      sha256: "7f0cd72eca000d2e026bcd6f990b81d0ca06022ef4e32fb257b30d3d1014a961"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.3.1"
   synchronized:
     dependency: transitive
     description:
@@ -409,5 +400,5 @@ packages:
     source: hosted
     version: "1.1.0"
 sdks:
-  dart: ">=3.8.0-0 <4.0.0"
+  dart: ">=3.9.0 <4.0.0"
   flutter: ">=3.29.0"

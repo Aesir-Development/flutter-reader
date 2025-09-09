@@ -19,8 +19,13 @@ dependencies:
   sqflite_common_ffi: ^2.3.0
   sqflite_migration: ^0.3.0
   path: ^1.8.3
-  flutter_js: ^0.8.5
   path_provider: ^2.1.5
+  flutter_lua_vm:
+    path: ../flutter_lua_vm
+    # use the below code to use the git version instead of the local version
+    # git:
+    #   url: https://github.com/Aesir-Development/flutter_lua_vm.git
+    #   ref: main
 
 dev_dependencies:
   flutter_test:

@@ -6,9 +6,9 @@
 
 #include "generated_plugin_registrant.h"
 
-#include <flutter_js/flutter_js_plugin.h>
+#include <flutter_lua_vm/flutter_lua_vm_plugin_c_api.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
-  FlutterJsPluginRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("FlutterJsPlugin"));
+  FlutterLuaVmPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("FlutterLuaVmPluginCApi"));
 }

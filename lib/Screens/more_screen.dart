@@ -15,7 +15,7 @@ class _MoreScreenState extends State<MoreScreen> {
       children: [
         ElevatedButton(
           onPressed: () {
-            PluginService.testPlugin();
+            PluginService.runTest();
           },
           child: Text('Run Test'),
         ),

@@ -1,8 +1,0 @@
-{
-  "libs": [
-    "plugins/libs/linkedom.cjs.js",
-    "plugins/libs/plugin_api.js",
-    "plugins/libs/plugin_funcs.js"
-  ],
-  "plugins": ["plugins/flamecomics.js"]
-}
