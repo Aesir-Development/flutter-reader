@@ -13,7 +13,7 @@ void main() async {
   // Initialize services
   await initializeApp();
     //await SQLiteProgressService.addDummyData();
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 Future<void> initializeApp() async {
