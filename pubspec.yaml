@@ -23,6 +23,7 @@ dependencies:
   path_provider: ^2.1.5
   flutter_lua_vm:
     path: ../flutter_lua_vm
+  html: ^0.15.6
     # use the below code to use the git version instead of the local version
     # git:
     #   url: https://github.com/Aesir-Development/flutter_lua_vm.git

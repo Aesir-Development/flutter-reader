@@ -1,0 +1,8 @@
+{
+  "libs": [
+    "plugins/libs/ElementNode.lua",
+    "plugins/libs/voidelements.lua",
+    "plugins/libs/htmlparser.lua"
+  ],
+  "plugins": ["plugins/flamecomics.lua"]
+}
