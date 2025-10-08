@@ -8,7 +8,7 @@ class CategoriesScreen extends StatefulWidget {
 }
 
 class _CustomCategoriesScreenState extends State<CategoriesScreen> {
-  List<Map<String, dynamic>> _customCategories = [
+  final List<Map<String, dynamic>> _customCategories = [
     {
       'id': '1',
       'name': 'Currently Reading',

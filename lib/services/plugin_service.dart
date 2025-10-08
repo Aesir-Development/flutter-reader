@@ -1,10 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ffi';
-import 'package:flutter/services.dart';
-import 'package:path/path.dart';
-import 'package:flutter_lua_vm/lua_vm.dart';
-
+import 'package:path/path.dart' as path;
+import 'package:flutter_lua_vm/LuaVM.dart';
 import 'package:flutter/foundation.dart';
 
 class PluginService {

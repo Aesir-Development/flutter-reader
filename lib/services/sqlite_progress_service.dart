@@ -703,12 +703,12 @@ static Future<Set<double>> getDownloadedChapters(String manhwaId) async {
         await db.insert('manhwas', {
           'id': manhwa.id,
           'name': manhwa.name,
-          'description': manhwa.description ?? '',
+          'description': manhwa.description,
           'genres': manhwa.genres.join(','),
           'rating': manhwa.rating,
           'status': manhwa.status,
-          'author': manhwa.author ?? '',
-          'artist': manhwa.artist ?? '',
+          'author': manhwa.author,
+          'artist': manhwa.artist,
           'cover_image_url': manhwa.coverImageUrl ?? '',
         }, conflictAlgorithm: ConflictAlgorithm.replace);
         

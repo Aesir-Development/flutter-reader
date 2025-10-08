@@ -24,8 +24,8 @@ Future<void> initializeApp() async {
     print('📚 Initializing manhwa database...');
     final stats = await ManhwaService.getStats();
     print('✅ Database initialized! Stats: $stats');
-
-    // ADD DELAY to let database operations complete
+    
+    // ADD DELAY
     await Future.delayed(const Duration(milliseconds: 500));
 
     // 2. Initialize progress service
