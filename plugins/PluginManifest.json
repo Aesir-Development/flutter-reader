@@ -1,0 +1,4 @@
+{
+  "libs": ["plugins/libs/json.lua", "plugins/libs/filtersearch.lua"],
+  "plugins": ["plugins/flamecomics.lua"]
+}

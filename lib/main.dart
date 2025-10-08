@@ -12,8 +12,8 @@ void main() async {
 
   // Initialize services
   await initializeApp();
-    //await SQLiteProgressService.addDummyData();
-  runApp(const MyApp());
+  //await SQLiteProgressService.addDummyData();
+  runApp(MyApp());
 }
 
 Future<void> initializeApp() async {
@@ -27,15 +27,15 @@ Future<void> initializeApp() async {
     
     // ADD DELAY
     await Future.delayed(const Duration(milliseconds: 500));
-    
+
     // 2. Initialize progress service
     print('🔄 Initializing progress service...');
     await ProgressService.initialize();
     print('✅ Progress service initialized!');
-    
+
     // ADD DELAY before sync
     await Future.delayed(const Duration(milliseconds: 300));
-    
+
     // 3. Background sync (make it non-blocking)
     if (ApiService.isLoggedIn) {
       print('👤 User is logged in, attempting background sync...');
@@ -43,7 +43,9 @@ Future<void> initializeApp() async {
         final canConnect = await ApiService.checkConnection();
         if (canConnect) {
           final syncSuccess = await ProgressService.performFullSync();
-          print(syncSuccess ? '✅ Background sync successful!' : '⚠️ Background sync failed');
+          print(syncSuccess
+              ? '✅ Background sync successful!'
+              : '⚠️ Background sync failed');
         } else {
           print('📱 No connection, working offline');
         }
@@ -54,10 +56,12 @@ Future<void> initializeApp() async {
     }
 
     print('👩‍🦽 Initializing Lua engine!');
-    if (kDebugMode) {
-      print('⚠️ Debug mode: Lua engine will run a test!');
+    PluginService.loadPlugins().then((map) {
+      // if (kDebugMode) {
+      debugPrint('⚠️ Debug mode: Lua engine will run a test!');
       PluginService.runTest();
-    }
+      // }
+    });
 
     print('✅ Lua engine initialized!');
 
