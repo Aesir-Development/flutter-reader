@@ -12,7 +12,8 @@ class Manhwa {
   final DateTime? lastUpdated;
   final List<Chapter> chapters;
   final String? coverImageUrl;
-
+  final String? pluginName;
+  final int chapterCount;
   const Manhwa({
     required this.id,
     required this.name,
@@ -25,6 +26,8 @@ class Manhwa {
     this.lastUpdated,
     required this.chapters,
     this.coverImageUrl,
+    this.pluginName,
+    this.chapterCount = 0,
   });
 
   // Convenience getters

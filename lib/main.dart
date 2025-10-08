@@ -6,7 +6,8 @@ import 'package:flutterreader/services/plugin_service.dart';
 import 'services/manhwa_service.dart';
 import 'services/progress_service.dart';
 import 'services/api_service.dart';
-
+import '../services/plugin_service.dart';
+ 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
